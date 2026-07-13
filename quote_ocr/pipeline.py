@@ -60,3 +60,24 @@ class QuotePipeline:
         for path in paths:
             quotes.extend(self.run_file(path, supplier=supplier))
         return quotes
+
+    def dump_ocr(self, path: str) -> str:
+        """Return a human-readable dump of what OCR detected, row by row.
+
+        This is the diagnostic to tell an OCR limitation (a tenor line simply
+        not detected/recognised) from a parser issue (line detected but dropped).
+        """
+        lines: List[str] = []
+        for page_no, image in load_pages(path):
+            items = self.engine.run(image)
+            rows = self.section_parser.group_rows(items)
+            lines.append(f"# {os.path.basename(path)}  page {page_no}  "
+                         f"({len(items)} text boxes, {len(rows)} rows)")
+            for r, row in enumerate(rows):
+                y = int(sum(it.cy for it in row) / len(row))
+                cells = " | ".join(
+                    f"{it.text}" for it in sorted(row, key=lambda x: x.cx)
+                )
+                lines.append(f"  row {r:>2} y={y:>5}: {cells}")
+            lines.append("")
+        return "\n".join(lines)

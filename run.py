@@ -55,6 +55,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Recognition language pack. 'ch' also handles English (default).",
     )
     p.add_argument("--quiet", action="store_true", help="Suppress the summary table.")
+    p.add_argument(
+        "--dump-ocr", metavar="PATH", default=None,
+        help="Diagnostic: write every OCR-detected line (grouped into rows) to "
+             "PATH and exit, instead of parsing. Use this to see whether a "
+             "missing tenor row was detected by OCR at all.",
+    )
     return p
 
 
@@ -80,6 +86,14 @@ def main(argv=None) -> int:
 
     print(f"Loading {config.ocr_version} ({config.model_type}, {config.engine}) ...")
     pipeline = QuotePipeline(config)
+
+    if args.dump_ocr:
+        with open(args.dump_ocr, "w", encoding="utf-8") as f:
+            for path in files:
+                f.write(pipeline.dump_ocr(path))
+                f.write("\n")
+        print(f"Wrote OCR dump for {len(files)} file(s) to {args.dump_ocr}.")
+        return 0
 
     quotes = []
     for path in files:

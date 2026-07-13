@@ -200,10 +200,9 @@ class TableParser:
 
     # -- row emission -------------------------------------------------------
     def _emit_row(self, row, groups, col_tol, date, supplier, source_file, page):
-        tenor_item = next((it for it in row if _TENOR_RE.fullmatch(it.text.strip())), None)
-        if tenor_item is None:
+        tenor, _tenor_item = self._row_tenor(row)
+        if not tenor:
             return []
-        tenor = canonical_tenor(_TENOR_RE.fullmatch(tenor_item.text.strip()).group(1))
         row_text = " ".join(it.text for it in row)
 
         out: List[Quote] = []
@@ -237,6 +236,20 @@ class TableParser:
                 )
             )
         return out
+
+    @staticmethod
+    def _row_tenor(row):
+        """Find the tenor in a row: leftmost cell that *starts* with a tenor.
+
+        Uses an anchored match (not fullmatch) so a tenor glued to another token
+        by OCR (e.g. '1s' next to a value) is still recognised. Pure numbers
+        never match, so values are not mistaken for tenors.
+        """
+        for it in sorted(row, key=lambda x: x.cx):
+            m = _TENOR_RE.match(it.text.strip())
+            if m:
+                return canonical_tenor(m.group(1)), it
+        return "", None
 
     def _value_at(self, row, column: Optional[Column], tol: float) -> str:
         if column is None:

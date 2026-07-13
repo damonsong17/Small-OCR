@@ -114,6 +114,23 @@ Tenor patterns and date/number regexes are at the top of **`quote_ocr/parser.py`
 - **Higher accuracy on messy scans**: try `--model server`; the parser is
   unchanged.
 
+## 7b. Diagnosing missing rows (OCR vs parser)
+
+If some tenor rows are missing from the output, first find out whether the OCR
+engine even detected them:
+
+```powershell
+python run.py your_sheet.png --dump-ocr dump.txt
+```
+
+`dump.txt` lists every OCR-detected line, grouped into rows. If a tenor (e.g.
+`1s`) does **not** appear there, it is an OCR *detection/recognition* limit —
+try `--model server`, or upscale the image (see below). If it *does* appear but
+is missing from the CSV, it is a parser issue — send me `dump.txt`.
+
+Tips to help OCR on dense sheets: use `--model server`, and/or upscale the image
+~2x before OCR (sharper small digits detect better than a downscaled screenshot).
+
 ## 8. Sanity check (offline)
 
 ```powershell
