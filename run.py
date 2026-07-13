@@ -43,6 +43,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="mobile = fast (default); server = more accurate.",
     )
     p.add_argument(
+        "--layout", default="auto", choices=["auto", "matrix", "section"],
+        help="auto (default) | matrix (wide multi-currency grid) | section.",
+    )
+    p.add_argument(
         "--engine", default="onnxruntime", choices=["onnxruntime", "openvino"],
         help="Inference backend. Use openvino to accelerate on Intel hardware.",
     )
@@ -68,6 +72,7 @@ def main(argv=None) -> int:
         ocr_version=args.ocr_version,
         model_type=args.model,
         engine=args.engine,
+        layout=args.layout,
         det_lang="ch" if args.lang == "ch" else "en",
         rec_lang=args.lang,
         supplier=args.supplier,
@@ -90,8 +95,8 @@ def main(argv=None) -> int:
     return 0
 
 
-def _preview(quotes, limit: int = 12) -> None:
-    cols = ["date", "supplier", "currency", "tenor", "bid", "offer"]
+def _preview(quotes, limit: int = 16) -> None:
+    cols = ["segment", "currency", "benchmark", "tenor", "bid", "offer"]
     widths = {c: len(c) for c in cols}
     for q in quotes[:limit]:
         row = q.as_row()

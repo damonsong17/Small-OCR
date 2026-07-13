@@ -14,13 +14,29 @@ get back clean records you can feed into your trade-opportunity logic.
 |---|---|---|
 | `date` | quote-sheet date | `2026-07-13` |
 | `supplier` | broker / counterparty (best-effort, may be blank) | `ACME BROKERS LTD` |
-| `currency` | currency or pair | `USD/CNY` |
-| `tenor` | tenor bucket | `O/N`, `1W`, `1M`, `3M`, `1Y` |
-| `bid` | bid / left price | `6.1234` |
-| `offer` | offer / right price | `6.1240` |
+| `segment` | market / desk grouping | `Chinese`, `Korean`, `ISLAMIC` |
+| `currency` | currency or pair | `USD`, `CNH`, `USD/CNY` |
+| `benchmark` | reference index for the row | `SOFR`, `EURIBOR`, `CNH HIBOR` |
+| `benchmark_rate` | the index value, when present | `1.42848` |
+| `tenor` | tenor bucket | `O/N`, `1W`, `2W`, `1S`, `6S`, `1Y` |
+| `bid` | bid price | `1.30` |
+| `offer` | offer price | `1.50` |
 | `source_file`, `page`, `confidence`, `raw` | provenance & auditing | |
 
 Fields that aren't present are left blank rather than dropped.
+
+## Two layouts (auto-detected)
+
+- **matrix** — wide grids where one tenor row carries many currencies side by
+  side (`Tenor | SOFR BID OFFER | EURIBOR BID OFFER | CNH HIBOR BID OFFER | …`),
+  optionally with stacked sub-tables. Parsed **column-by-column using
+  x-positions**, so every currency is captured and missing cells (`-`) stay
+  blank without shifting the row. This is emitted as **one record per
+  tenor × currency**.
+- **section** — simpler sheets with one currency block at a time.
+
+`--layout auto` (default) picks matrix when the sheet has `BID`/`OFFER` column
+headers, otherwise section.
 
 ## Quick start
 
@@ -56,6 +72,11 @@ acceleration, tuning, and how to extend the field extraction.
 ## Try it offline
 
 ```bash
+# section-style sheet
 python examples/make_sample.py                       # writes examples/sample_fx_quote.png
 python run.py examples/sample_fx_quote.png -o out.csv
+
+# wide matrix sheet (multi-currency grid + stacked sub-table)
+python examples/make_matrix_sample.py                # writes examples/sample_matrix_quote.png
+python run.py examples/sample_matrix_quote.png -o out.csv
 ```

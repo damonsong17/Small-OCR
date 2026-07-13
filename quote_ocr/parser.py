@@ -21,15 +21,17 @@ from .models import Quote
 from .ocr_engine import TextItem
 
 # --- Tenor recognition -------------------------------------------------------
-# Short-dated FX / money-market points plus N-unit tenors (1W, 3M, 1Y, ...).
+# Short-dated points (O/N, T/N, S/N, S/W -- '.' '/' or nothing as separator,
+# '0' a common OCR slip for 'O') plus generic N-unit tenors (1W, 2W, 1S, 6S,
+# 3M, 1Y, ...). The unit is captured loosely so desk-specific buckets like
+# '1s'/'6s' are not dropped.
 _TENOR_RE = re.compile(
     r"""(?ix)
     (?<![A-Z0-9])                      # left boundary
     (
-        [0O]/?N | T/?N | S/?N | S/?W   # O/N, T/N, S/N, S/W (0 = common OCR slip)
+        [0O][./]?N | T[./]?N | S[./]?N | S[./]?W   # O/N, T/N, S/N, S/W
         |
-        \d{1,2}\s?
-        (?:D|W|M|Y|MO|MTH|YR|WK|DAYS?|WEEKS?|MONTHS?|YEARS?)
+        \d{1,2}\s?[A-Z]{1,4}           # 1W, 2W, 1S, 6S, 3M, 1Y, 12M ...
     )
     (?![A-Z0-9])                       # right boundary
     """,
@@ -45,6 +47,12 @@ _UNIT_MAP = [
 # --- Number recognition ------------------------------------------------------
 # Prices, forward points (may be signed), thousands separators allowed.
 _NUMBER_RE = re.compile(r"[-+]?\d{1,3}(?:,\d{3})+(?:\.\d+)?|[-+]?\d+(?:\.\d+)?")
+
+# Words that mark a line as a broker / counterparty name.
+_SUPPLIER_HINT_RE = re.compile(
+    r"(?i)\b(brokers?|broking|capital|securities|markets?|bank|limited|ltd|llc|"
+    r"inc|plc|partners|counterpart\w*)\b"
+)
 
 # --- Date recognition --------------------------------------------------------
 _MONTHS = {
@@ -66,15 +74,19 @@ _DATE_PATTERNS = [
 
 
 def canonical_tenor(raw: str) -> str:
-    """Normalise a matched tenor token, e.g. '0/n' -> 'O/N', '3 mth' -> '3M'."""
+    """Normalise a matched tenor token, e.g. '0/n'/'o.n' -> 'O/N', '3 mth' -> '3M'.
+
+    Known units (month/year/week/day) are shortened; unrecognised but valid
+    desk units (e.g. the 's' in '1s'/'6s') are kept verbatim so nothing is lost.
+    """
     t = raw.upper().replace(" ", "")
-    if re.fullmatch(r"[0O]/?N", t):
+    if re.fullmatch(r"[0O][./]?N", t):
         return "O/N"
-    if re.fullmatch(r"T/?N", t):
+    if re.fullmatch(r"T[./]?N", t):
         return "T/N"
-    if re.fullmatch(r"S/?N", t):
+    if re.fullmatch(r"S[./]?N", t):
         return "S/N"
-    if re.fullmatch(r"S/?W", t):
+    if re.fullmatch(r"S[./]?W", t):
         return "S/W"
     m = re.fullmatch(r"(\d{1,2})([A-Z]+)", t)
     if m:
@@ -222,7 +234,11 @@ class QuoteParser:
 
     # -- supplier (best effort) --------------------------------------------
     def _guess_supplier(self, rows: List[List[TextItem]]) -> str:
-        """Top-of-sheet line that looks like a name (letters, no tenor/price)."""
+        """Top-of-sheet line that looks like a broker name.
+
+        Requires a company-like keyword so generic banners (e.g. a 'Chinese'
+        segment label) are not mistaken for a supplier.
+        """
         for row in rows[:3]:
             text = " ".join(it.text for it in row).strip()
             if len(text) < 3:
@@ -231,6 +247,6 @@ class QuoteParser:
                 continue
             if self.find_currency(text):
                 continue
-            if sum(ch.isalpha() for ch in text) >= 3:
+            if _SUPPLIER_HINT_RE.search(text):
                 return text
         return ""

@@ -43,6 +43,7 @@ python run.py samples\quotes.pdf -o quotes.csv
 | `--supplier` | *(auto)* | force a supplier tag on every row |
 | `--ocr-version` | `PP-OCRv5` | `PP-OCRv4` / `PP-OCRv5` / `PP-OCRv6` |
 | `--model` | `mobile` | `mobile` (fast) or `server` (more accurate) |
+| `--layout` | `auto` | `auto` / `matrix` (wide grid) / `section` |
 | `--engine` | `onnxruntime` | `openvino` to accelerate on Intel |
 | `--lang` | `ch` | `ch` handles CN+EN; `en` for latin-only |
 
@@ -62,22 +63,32 @@ zero-extra-dependency setup — on this hardware it is already fast.
 
 ## 4. Output schema
 
-CSV/JSON columns: `date, supplier, currency, tenor, bid, offer, source_file,
-page, confidence, raw`. `raw` is the reconstructed row text, handy for spot-checks.
+CSV/JSON columns: `date, supplier, segment, currency, benchmark, benchmark_rate,
+tenor, bid, offer, source_file, page, confidence, raw`. `raw` is the
+reconstructed row text, handy for spot-checks. Missing fields are left blank.
+
+For a **matrix** sheet you get **one row per tenor × currency** — e.g. a single
+`o/n` line across USD/EUR/CNH/HKD becomes four records.
 
 ## 5. How it works
 
 ```
-image/PDF ─▶ loader ─▶ PP-OCRv5 (RapidOCR) ─▶ row reconstruction ─▶ field extraction ─▶ CSV/JSON
-            (loader.py)     (ocr_engine.py)         (parser.py)          (parser.py)     (writer.py)
+image/PDF ─▶ loader ─▶ PP-OCRv5 (RapidOCR) ─▶ rows ─▶ layout parser ─▶ CSV/JSON
+            (loader.py)   (ocr_engine.py)              (table_parser.py /   (writer.py)
+                                                         parser.py)
 ```
 
 1. **Load** — images directly; PDFs rendered to page images (PyMuPDF).
 2. **OCR** — PP-OCRv5 returns text boxes + confidence.
 3. **Rows** — boxes are clustered by vertical position to rebuild table rows.
-4. **Extract** — per row: tenor (regex), bid/offer (numbers), with a
-   "current currency" tracked from section-header rows; date & supplier are
-   page-level.
+4. **Parse** — the layout is auto-detected:
+   - **matrix** (`table_parser.py`): reads the `BID`/`OFFER` header band to build
+     a column model, then reads every cell by x-position — so all currencies in
+     a row are captured and missing `-` cells stay blank. Emits one record per
+     tenor × currency, with `segment` / `benchmark` / `benchmark_rate`.
+   - **section** (`parser.py`): one currency block at a time, tracking the
+     current currency from header rows.
+   - `date` & `supplier` are page-level in both.
 
 ## 6. Tuning for your sheets
 
@@ -106,8 +117,11 @@ Tenor patterns and date/number regexes are at the top of **`quote_ocr/parser.py`
 ## 8. Sanity check (offline)
 
 ```powershell
+# section layout -> 8 rows across USD/CNY and EUR/USD
 python examples\make_sample.py
 python run.py examples\sample_fx_quote.png -o out.csv
-```
 
-You should get 8 rows across `USD/CNY` and `EUR/USD` sections.
+# matrix layout -> 35 rows (USD/EUR/CNH/HKD grid + Korean/Taiwanese/Indian/ISLAMIC)
+python examples\make_matrix_sample.py
+python run.py examples\sample_matrix_quote.png -o out.csv
+```

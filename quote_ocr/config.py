@@ -28,6 +28,12 @@ class Config:
     rec_lang: str = "ch"                   # ch covers CN+EN
     text_score: float = 0.5                # drop OCR results below this confidence
 
+    # --- Layout ---
+    # auto   : matrix if the sheet has BID/OFFER column headers, else section
+    # matrix : wide multi-currency grid (coordinate-aware, table_parser)
+    # section: one currency block at a time (parser)
+    layout: str = "auto"
+
     # --- Table row reconstruction ---
     # Two text boxes belong to the same row if their vertical centres are within
     # this fraction of the median text height.
