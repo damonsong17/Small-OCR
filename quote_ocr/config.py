@@ -44,6 +44,10 @@ class Config:
     supplier: str = ""                     # override; blank => best-effort auto-detect
     default_currency: str = ""             # fall back when a row has no currency context
 
+    # Raw tenor unit letters that mean "month" for this source. Default maps
+    # 's' (as in '1s'/'6s') to 'M' so output matches FTP/Bloomberg conventions.
+    month_units: tuple = ("M", "S")
+
     # A data row must contain a tenor AND at least this many price numbers to be
     # emitted as a quote.
     min_prices_for_quote: int = 1

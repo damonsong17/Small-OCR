@@ -37,12 +37,27 @@ _TENOR_RE = re.compile(
     """,
 )
 
-_UNIT_MAP = [
-    ("MONTHS", "M"), ("MONTH", "M"), ("MTH", "M"), ("MO", "M"),
-    ("YEARS", "Y"), ("YEAR", "Y"), ("YR", "Y"),
-    ("WEEKS", "W"), ("WEEK", "W"), ("WK", "W"),
-    ("DAYS", "D"), ("DAY", "D"),
-]
+# Canonical unit -> the set of raw unit spellings that map to it. 'M' includes
+# 'S' by default because these desks write months as '1s'/'6s'; downstream
+# systems (FTP, Bloomberg) expect 'M'. Override via Config.month_units if a
+# source uses 'S' to mean something else.
+_YEAR_UNITS = {"Y", "YR", "YEAR", "YEARS"}
+_WEEK_UNITS = {"W", "WK", "WEEK", "WEEKS"}
+_DAY_UNITS = {"D", "DAY", "DAYS"}
+_BASE_MONTH_UNITS = {"M", "MO", "MTH", "MONTH", "MONTHS"}
+
+
+def _canon_unit(unit: str, month_units) -> str:
+    months = _BASE_MONTH_UNITS | {u.upper() for u in month_units}
+    if unit in months:
+        return "M"
+    if unit in _YEAR_UNITS:
+        return "Y"
+    if unit in _WEEK_UNITS:
+        return "W"
+    if unit in _DAY_UNITS:
+        return "D"
+    return unit  # unknown unit kept verbatim so nothing is silently lost
 
 # --- Number recognition ------------------------------------------------------
 # Prices, forward points (may be signed), thousands separators allowed.
@@ -73,11 +88,13 @@ _DATE_PATTERNS = [
 ]
 
 
-def canonical_tenor(raw: str) -> str:
-    """Normalise a matched tenor token, e.g. '0/n'/'o.n' -> 'O/N', '3 mth' -> '3M'.
+def canonical_tenor(raw: str, month_units=("M", "S")) -> str:
+    """Normalise a matched tenor token, e.g. '0/n'/'o.n' -> 'O/N', '1s' -> '1M'.
 
-    Known units (month/year/week/day) are shortened; unrecognised but valid
-    desk units (e.g. the 's' in '1s'/'6s') are kept verbatim so nothing is lost.
+    ``month_units`` are the raw unit letters that mean "month" for this source
+    (default includes 'S', since these desks write '1s' for one month while
+    downstream systems expect '1M'). Year/week/day are also normalised; any
+    truly unknown unit is kept verbatim so nothing is silently lost.
     """
     t = raw.upper().replace(" ", "")
     if re.fullmatch(r"[0O][./]?N", t):
@@ -91,11 +108,7 @@ def canonical_tenor(raw: str) -> str:
     m = re.fullmatch(r"(\d{1,2})([A-Z]+)", t)
     if m:
         num, unit = m.group(1), m.group(2)
-        for long, short in _UNIT_MAP:
-            if unit == long:
-                unit = short
-                break
-        return f"{int(num)}{unit}"
+        return f"{int(num)}{_canon_unit(unit, month_units)}"
     return t
 
 
@@ -199,7 +212,7 @@ class QuoteParser:
             remainder = row_text
             tenor = ""
             if tenor_match:
-                tenor = canonical_tenor(tenor_match.group(1))
+                tenor = canonical_tenor(tenor_match.group(1), self.config.month_units)
                 remainder = row_text[: tenor_match.start()] + " " + row_text[tenor_match.end():]
 
             numbers = [_clean_number(n) for n in _NUMBER_RE.findall(remainder)]

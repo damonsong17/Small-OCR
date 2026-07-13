@@ -18,7 +18,7 @@ get back clean records you can feed into your trade-opportunity logic.
 | `currency` | currency or pair | `USD`, `CNH`, `USD/CNY` |
 | `benchmark` | reference index for the row | `SOFR`, `EURIBOR`, `CNH HIBOR` |
 | `benchmark_rate` | the index value, when present | `1.42848` |
-| `tenor` | tenor bucket | `O/N`, `1W`, `2W`, `1S`, `6S`, `1Y` |
+| `tenor` | tenor bucket (months normalised to `M`) | `O/N`, `1W`, `2W`, `1M`, `6M`, `1Y` |
 | `bid` | bid price | `1.30` |
 | `offer` | offer price | `1.50` |
 | `source_file`, `page`, `confidence`, `raw` | provenance & auditing | |
@@ -44,7 +44,9 @@ back to section, so unusual structures still produce output.
   left blank, not guessed);
 - **narrow / few-column** sheets from other sources (e.g. a single
   `Tenor | Bid | Offer`), not just wide grids;
-- **missing cells** (`-`) and multi-word benchmarks (`CNH HIBOR`).
+- **missing cells** (`-`) and multi-word benchmarks (`CNH HIBOR`);
+- **tenor normalisation** — sources that write months as `1s`/`6s` are output as
+  `1M`/`6M` (configurable via `Config.month_units`) to match FTP / Bloomberg.
 
 **Output stays compatible:** the first ten CSV columns are exactly the original
 `date, supplier, currency, tenor, bid, offer, source_file, page, confidence,

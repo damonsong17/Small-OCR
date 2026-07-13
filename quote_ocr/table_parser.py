@@ -237,8 +237,7 @@ class TableParser:
             )
         return out
 
-    @staticmethod
-    def _row_tenor(row):
+    def _row_tenor(self, row):
         """Find the tenor in a row: leftmost cell that *starts* with a tenor.
 
         Uses an anchored match (not fullmatch) so a tenor glued to another token
@@ -248,7 +247,7 @@ class TableParser:
         for it in sorted(row, key=lambda x: x.cx):
             m = _TENOR_RE.match(it.text.strip())
             if m:
-                return canonical_tenor(m.group(1)), it
+                return canonical_tenor(m.group(1), self.config.month_units), it
         return "", None
 
     def _value_at(self, row, column: Optional[Column], tol: float) -> str:
