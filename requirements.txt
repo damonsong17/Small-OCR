@@ -1,0 +1,11 @@
+# Core OCR pipeline
+rapidocr>=3.0        # PP-OCRv5 text detection + recognition (ONNX)
+onnxruntime>=1.17    # inference backend (CPU)
+pillow>=9.0          # image loading
+numpy>=1.24
+
+# PDF input support (the pipeline auto-enables PDF when this is installed)
+pymupdf>=1.23
+
+# Optional: Intel OpenVINO acceleration for i5/UHD 630 (use: --engine openvino)
+# openvino>=2024.0
