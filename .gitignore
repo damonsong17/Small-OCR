@@ -9,9 +9,10 @@ venv/
 *.onnx
 
 # Pipeline outputs
-*.csv
-*.json
-!examples/**
+/*.csv
+/*.json
+quotes.csv
+quotes.json
 
 # Editor
 .vscode/
