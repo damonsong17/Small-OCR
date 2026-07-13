@@ -36,7 +36,20 @@ Fields that aren't present are left blank rather than dropped.
 - **section** — simpler sheets with one currency block at a time.
 
 `--layout auto` (default) picks matrix when the sheet has `BID`/`OFFER` column
-headers, otherwise section.
+headers, otherwise section — and if the matrix parser finds nothing it falls
+back to section, so unusual structures still produce output.
+
+**Handles varied inputs**, all into the same schema:
+- **single-sided** quotes — offer-only or bid-only sheets (the missing side is
+  left blank, not guessed);
+- **narrow / few-column** sheets from other sources (e.g. a single
+  `Tenor | Bid | Offer`), not just wide grids;
+- **missing cells** (`-`) and multi-word benchmarks (`CNH HIBOR`).
+
+**Output stays compatible:** the first ten CSV columns are exactly the original
+`date, supplier, currency, tenor, bid, offer, source_file, page, confidence,
+raw`; `segment`, `benchmark`, `benchmark_rate` are appended at the end, so
+existing consumers keep working regardless of the input table type.
 
 ## Quick start
 

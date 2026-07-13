@@ -26,26 +26,30 @@ class QuotePipeline:
         self.section_parser = QuoteParser(self.config)
         self.table_parser = TableParser(self.config)
 
-    def _pick_parser(self, items: List[TextItem]):
+    def _parse_page(self, items: List[TextItem], **kw) -> List[Quote]:
         layout = self.config.layout
         if layout == "section":
-            return self.section_parser
+            return self.section_parser.parse(items, **kw)
         if layout == "matrix":
-            return self.table_parser
-        # auto: use the matrix parser when the page has BID/OFFER column headers.
+            return self.table_parser.parse(items, **kw)
+
+        # auto: prefer the matrix parser when the page has BID/OFFER column
+        # headers; fall back to the section parser if it yields nothing (e.g. a
+        # simple narrow sheet with no column headers, or an unusual structure).
         rows = self.section_parser.group_rows(items)
         if any(TableParser._is_header_row(r) for r in rows):
-            return self.table_parser
-        return self.section_parser
+            quotes = self.table_parser.parse(items, **kw)
+            if quotes:
+                return quotes
+        return self.section_parser.parse(items, **kw)
 
     def run_file(self, path: str, supplier: str = "") -> List[Quote]:
         source = os.path.basename(path)
         quotes: List[Quote] = []
         for page_no, image in load_pages(path):
             items = self.engine.run(image)
-            parser = self._pick_parser(items)
             quotes.extend(
-                parser.parse(
+                self._parse_page(
                     items, source_file=source, page=page_no, supplier=supplier
                 )
             )

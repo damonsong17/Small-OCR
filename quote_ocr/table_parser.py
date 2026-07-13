@@ -95,11 +95,16 @@ class TableParser:
     # -- header handling ----------------------------------------------------
     @staticmethod
     def _is_header_row(row: List[TextItem]) -> bool:
-        """A field-header row carries at least two BID/OFFER labels."""
-        hits = sum(
-            bool(_BID_RE.search(it.text) or _OFFER_RE.search(it.text)) for it in row
+        """A field-header row carries at least one BID/OFFER label and no prices.
+
+        Requiring 'no price numbers' distinguishes the header from data rows and
+        lets single-sided sheets (offer-only or bid-only) still be recognised.
+        """
+        has_field = any(
+            _BID_RE.search(it.text) or _OFFER_RE.search(it.text) for it in row
         )
-        return hits >= 2
+        has_price = any(_NUMBER_RE.fullmatch(it.text.strip()) for it in row)
+        return has_field and not has_price
 
     def _classify(self, text: str) -> Column:
         currency = self._helper.find_currency(text) or ""
@@ -185,7 +190,7 @@ class TableParser:
             label_ccy = self._as_currency(label)
             col_ccy = next((c.currency for c in g.columns if c.currency), "")
 
-            g.currency = col_ccy or label_ccy
+            g.currency = col_ccy or label_ccy or self.config.default_currency
             g.benchmark = g.index_text()
             # Segment = the group label when it is not itself a currency,
             # otherwise the page-level category banner (e.g. 'Chinese').
