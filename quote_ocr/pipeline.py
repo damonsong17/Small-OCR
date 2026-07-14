@@ -4,11 +4,14 @@ from __future__ import annotations
 import os
 from typing import List, Optional
 
+import numpy as np
+
 from .config import Config
 from .loader import load_pages
 from .models import Quote
 from .ocr_engine import OcrEngine, TextItem
 from .parser import QuoteParser
+from .preprocess import enhance, is_active
 from .table_parser import TableParser
 
 
@@ -43,11 +46,22 @@ class QuotePipeline:
                 return quotes
         return self.section_parser.parse(items, **kw)
 
+    def _ocr(self, image: np.ndarray) -> List[TextItem]:
+        if is_active(self.config):
+            image = enhance(
+                image,
+                upscale=self.config.upscale,
+                grayscale=self.config.grayscale,
+                sharpen=self.config.sharpen,
+                contrast=self.config.contrast,
+            )
+        return self.engine.run(image)
+
     def run_file(self, path: str, supplier: str = "") -> List[Quote]:
         source = os.path.basename(path)
         quotes: List[Quote] = []
         for page_no, image in load_pages(path):
-            items = self.engine.run(image)
+            items = self._ocr(image)
             quotes.extend(
                 self._parse_page(
                     items, source_file=source, page=page_no, supplier=supplier
@@ -69,7 +83,7 @@ class QuotePipeline:
         """
         lines: List[str] = []
         for page_no, image in load_pages(path):
-            items = self.engine.run(image)
+            items = self._ocr(image)
             rows = self.section_parser.group_rows(items)
             lines.append(f"# {os.path.basename(path)}  page {page_no}  "
                          f"({len(items)} text boxes, {len(rows)} rows)")

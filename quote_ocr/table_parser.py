@@ -240,11 +240,19 @@ class TableParser:
     def _row_tenor(self, row):
         """Find the tenor in a row: leftmost cell that *starts* with a tenor.
 
-        Uses an anchored match (not fullmatch) so a tenor glued to another token
-        by OCR (e.g. '1s' next to a value) is still recognised. Pure numbers
-        never match, so values are not mistaken for tenors.
+        Applies configured tenor_fixups to the leftmost cell first (to recover
+        OCR misreads like '35' -> '3M'), then an anchored regex match (not
+        fullmatch, so a tenor glued to another token is still recognised). Pure
+        numbers never match, so values are not mistaken for tenors.
         """
-        for it in sorted(row, key=lambda x: x.cx):
+        items = sorted(row, key=lambda x: x.cx)
+        fixups = self.config.tenor_fixups
+        if items and fixups:
+            left = items[0].text.strip()
+            fixed = fixups.get(left) or fixups.get(left.lower())
+            if fixed:
+                return fixed, items[0]
+        for it in items:
             m = _TENOR_RE.match(it.text.strip())
             if m:
                 return canonical_tenor(m.group(1), self.config.month_units), it

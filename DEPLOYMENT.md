@@ -128,8 +128,19 @@ python run.py your_sheet.png --dump-ocr dump.txt
 try `--model server`, or upscale the image (see below). If it *does* appear but
 is missing from the CSV, it is a parser issue — send me `dump.txt`.
 
-Tips to help OCR on dense sheets: use `--model server`, and/or upscale the image
-~2x before OCR (sharper small digits detect better than a downscaled screenshot).
+Tips to help OCR on dense sheets, in order:
+
+1. **`--model server`** — the stronger recognizer; usually the single best fix
+   for a misread character.
+2. **`--enhance`** — 2x upscale + grayscale + sharpen + contrast before OCR
+   (or `--upscale 2.5` for a custom factor). Helps small/dense tenor text.
+3. **`--tenor-fix`** — a guaranteed override for a known misread. If the
+   recognizer reads `1s/2s/3s/6s` as `15/25/35/65`, add:
+   ```powershell
+   python run.py AFS.png -o out.csv --model server --enhance --tenor-fix "15=1M,25=2M,35=3M,65=6M"
+   ```
+   Confirm the exact misread first with `--dump-ocr` (the left cell of the
+   affected rows shows what OCR actually read), then map those strings.
 
 ## 8. Sanity check (offline)
 

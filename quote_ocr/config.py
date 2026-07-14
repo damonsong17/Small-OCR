@@ -48,6 +48,17 @@ class Config:
     # 's' (as in '1s'/'6s') to 'M' so output matches FTP/Bloomberg conventions.
     month_units: tuple = ("M", "S")
 
+    # Exact-match corrections applied to the leftmost (tenor) cell, to recover
+    # OCR misreads of the tenor. Keyed by the raw OCR text -> canonical tenor,
+    # e.g. {"15": "1M", "35": "3M"} when the recognizer reads '3s' as '35'.
+    tenor_fixups: dict = field(default_factory=dict)
+
+    # --- Image preprocessing (helps OCR on small/dense tables) ---
+    upscale: float = 1.0        # e.g. 2.0 to double the image before OCR
+    grayscale: bool = False
+    sharpen: bool = False
+    contrast: float = 1.0       # e.g. 1.5 to boost contrast
+
     # A data row must contain a tenor AND at least this many price numbers to be
     # emitted as a quote.
     min_prices_for_quote: int = 1

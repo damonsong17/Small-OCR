@@ -54,6 +54,22 @@ def build_parser() -> argparse.ArgumentParser:
         "--lang", default="ch", choices=["ch", "en"],
         help="Recognition language pack. 'ch' also handles English (default).",
     )
+    p.add_argument(
+        "--enhance", action="store_true",
+        help="Preprocess for small/dense tables: 2x upscale + grayscale + "
+             "sharpen + contrast. Try this if tenor units (e.g. '1s') are "
+             "misread as digits.",
+    )
+    p.add_argument(
+        "--upscale", type=float, default=None, metavar="N",
+        help="Upscale the image N times before OCR (e.g. 2.0). Overrides the "
+             "upscale from --enhance.",
+    )
+    p.add_argument(
+        "--tenor-fix", default="", metavar="MAP",
+        help="Correct OCR-misread tenors, e.g. '15=1M,35=3M,65=6M' when the "
+             "recognizer reads '3s' as '35'. Applied to the tenor column.",
+    )
     p.add_argument("--quiet", action="store_true", help="Suppress the summary table.")
     p.add_argument(
         "--dump-ocr", metavar="PATH", default=None,
@@ -74,6 +90,12 @@ def main(argv=None) -> int:
 
     fmt = args.format or ("json" if args.output.lower().endswith(".json") else "csv")
 
+    upscale = args.upscale if args.upscale is not None else (2.0 if args.enhance else 1.0)
+    tenor_fixups = {}
+    for pair in args.tenor_fix.split(","):
+        if "=" in pair:
+            k, v = pair.split("=", 1)
+            tenor_fixups[k.strip()] = v.strip()
     config = Config(
         ocr_version=args.ocr_version,
         model_type=args.model,
@@ -82,6 +104,11 @@ def main(argv=None) -> int:
         det_lang="ch" if args.lang == "ch" else "en",
         rec_lang=args.lang,
         supplier=args.supplier,
+        upscale=upscale,
+        grayscale=args.enhance,
+        sharpen=args.enhance,
+        contrast=1.5 if args.enhance else 1.0,
+        tenor_fixups=tenor_fixups,
     )
 
     print(f"Loading {config.ocr_version} ({config.model_type}, {config.engine}) ...")
