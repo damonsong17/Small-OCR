@@ -211,7 +211,9 @@ class TableParser:
             bid = self._value_at(row, bid_c, col_tol) if bid_c else ""
             offer = self._value_at(row, offer_c, col_tol) if offer_c else ""
             rate = self._value_at(row, idx_c, col_tol) if idx_c else ""
-            if not bid and not offer:
+            # Keep the row if it has any data: a benchmark fixing with no
+            # tradeable bid/offer (e.g. HKD o/n) is still a real quote.
+            if not bid and not offer and not rate:
                 continue
             used = [
                 self._nearest(row, c.x, col_tol)
