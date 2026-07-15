@@ -9,3 +9,6 @@ pymupdf>=1.23
 
 # Optional: Intel OpenVINO acceleration for i5/UHD 630 (use: --engine openvino)
 # openvino>=2024.0
+
+# Optional: reshape output CSV back into the wide AFS Excel layout (to_excel.py)
+openpyxl>=3.1

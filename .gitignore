@@ -17,3 +17,6 @@ quotes.json
 # Editor
 .vscode/
 .idea/
+
+# Excel exports
+/*.xlsx
