@@ -66,10 +66,19 @@ def ingest(
     pipeline = QuotePipeline(config or Config())
     summary = {"processed": 0, "skipped": 0, "unnamed": 0, "quotes": 0}
 
+    inbox_path = Path(inbox)
+    if not inbox_path.exists():
+        print(f"  ! inbox folder does not exist: {inbox}")
+        return {"processed": 0, "skipped": 0, "unnamed": 0, "quotes": 0}
+
     files = [
-        p for p in sorted(Path(inbox).rglob("*"))
+        p for p in sorted(inbox_path.rglob("*"))
         if p.suffix.lower() in SUPPORTED_SUFFIXES
     ]
+    if verbose:
+        print(f"  found {len(files)} image file(s) under {inbox}")
+    if not files:
+        print(f"  ! no images ({', '.join(sorted(SUPPORTED_SUFFIXES))}) found under {inbox}")
 
     with QuoteStore(str(out_path / "quotes.db")) as store:
         for path in files:
@@ -103,4 +112,7 @@ def ingest(
             if verbose:
                 print(f"  + {path.name}: {len(quotes)} quotes -> {stem}.csv")
 
+    if summary["processed"] == 0 and summary["unnamed"] > 0:
+        print("  ! nothing processed: filenames must be SOURCE_YYYYMMDD, "
+              "e.g. rename 'AFS.png' -> 'AFS_20260716.png'")
     return summary
