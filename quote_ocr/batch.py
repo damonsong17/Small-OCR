@@ -15,6 +15,7 @@ Outputs are written into separate directories:
 from __future__ import annotations
 
 import re
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -80,21 +81,27 @@ def ingest(
     if not files:
         print(f"  ! no images ({', '.join(sorted(SUPPORTED_SUFFIXES))}) found under {inbox}")
 
+    n = len(files)
     with QuoteStore(str(out_path / "quotes.db")) as store:
-        for path in files:
+        for i, path in enumerate(files, 1):
             parsed = parse_filename(path.stem)
             if not parsed:
                 summary["unnamed"] += 1
                 if verbose:
-                    print(f"  ! skip (name not SOURCE_YYYYMMDD): {path.name}")
+                    print(f"  [{i}/{n}] ! skip (name not SOURCE_YYYYMMDD): {path.name}")
                 continue
             source, date = parsed
             sha1 = sha1_of(str(path))
 
             if not force and store.is_processed(str(path), sha1):
                 summary["skipped"] += 1
+                if verbose:
+                    print(f"  [{i}/{n}] = skip (already ingested): {path.name}")
                 continue
 
+            if verbose:
+                print(f"  [{i}/{n}] processing {path.name} ... ", end="", flush=True)
+            t0 = time.time()
             quotes = pipeline.run_file(str(path), supplier=source)
             for q in quotes:
                 q.date = date        # authoritative date from the filename
@@ -110,7 +117,8 @@ def ingest(
             summary["processed"] += 1
             summary["quotes"] += len(quotes)
             if verbose:
-                print(f"  + {path.name}: {len(quotes)} quotes -> {stem}.csv")
+                print(f"{len(quotes)} quotes in {time.time() - t0:.1f}s -> {stem}.csv",
+                      flush=True)
 
     if summary["processed"] == 0 and summary["unnamed"] > 0:
         print("  ! nothing processed: filenames must be SOURCE_YYYYMMDD, "

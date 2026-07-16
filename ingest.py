@@ -26,8 +26,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Reprocess every file, ignoring the incremental manifest.")
     p.add_argument("--no-xlsx", action="store_true", help="Skip Excel export.")
     # OCR options (mirror run.py; sensible production defaults).
-    p.add_argument("--model", default="server", choices=["mobile", "server"],
-                   help="server (default here) = more accurate; mobile = faster.")
+    p.add_argument("--model", default="mobile", choices=["mobile", "server"],
+                   help="mobile (default) = fast, right for i5/UHD 630; server = "
+                        "more accurate but ~10x slower on CPU.")
     p.add_argument("--engine", default="onnxruntime", choices=["onnxruntime", "openvino"])
     p.add_argument("--layout", default="auto", choices=["auto", "matrix", "section"])
     p.add_argument("--lang", default="ch", choices=["ch", "en"])
@@ -63,6 +64,9 @@ def main(argv=None) -> int:
 
     print(f"Ingesting {args.inbox} -> {args.out} "
           f"(PP-OCRv5 {args.model}, enhance={args.enhance}) ...")
+    if args.model == "server":
+        print("  note: server model is ~10x slower on CPU; expect minutes/image "
+              "on an i5. Use --model mobile if it's too slow.")
     s = ingest(args.inbox, args.out, config, force=args.force,
                make_xlsx=not args.no_xlsx)
     print(f"\nDone. processed={s['processed']} skipped={s['skipped']} "
