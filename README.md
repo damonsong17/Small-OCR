@@ -70,6 +70,35 @@ python run.py samples\ -o quotes.json --supplier "ACME BROKERS"
 python run.py quotes.pdf -o quotes.csv
 ```
 
+## Production: batch-ingest dated source folders
+
+Drop images named `SOURCE_YYYYMMDD.png` into a folder (subfolders per source are
+fine) and ingest the whole tree. Metadata comes from the filename
+(`AFS_20260716.png` → source `AFS`, date `2026-07-16`), and ingestion is
+**incremental** — files already processed (by content hash) are skipped, so
+history is never rebuilt.
+
+```bash
+python ingest.py data/inbox --out data/output --model server --enhance
+```
+
+Produces:
+```
+data/output/csv/AFS_2026-07-16.csv     # per-file long-format CSV
+data/output/xlsx/AFS_2026-07-16.xlsx   # per-file wide AFS layout
+data/output/quotes.db                  # full history + manifest (SQLite)
+```
+
+`quotes.db` is the canonical store — a time series *and* the same-day pricing
+source. Query a currency slice across all sources for a date:
+
+```python
+from quote_ocr.store import QuoteStore
+with QuoteStore("data/output/quotes.db") as db:
+    for r in db.by_currency("2026-07-16", "USD"):
+        print(dict(r))
+```
+
 ## Use it as a library (pipeline stage)
 
 ```python

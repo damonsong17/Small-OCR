@@ -20,3 +20,8 @@ quotes.json
 
 # Excel exports
 /*.xlsx
+
+# Ingestion outputs
+/output/
+/data/
+*.db
