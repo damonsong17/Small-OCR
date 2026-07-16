@@ -47,6 +47,29 @@ python run.py samples\quotes.pdf -o quotes.csv
 | `--engine` | `onnxruntime` | `openvino` to accelerate on Intel |
 | `--lang` | `ch` | `ch` handles CN+EN; `en` for latin-only |
 
+## 2b. Offline / air-gapped / secure operation
+
+The pipeline runs **entirely on your machine** — no telemetry, no outbound calls
+during processing. Images → CSV/DB/Excel never leave the host. Both `mobile` and
+`server` models are **local** ONNX files; "server" is a model *size* tier, not a
+network server.
+
+The **only** network access is a one-time model-weight download on first run.
+To run fully offline afterwards (or on an air-gapped machine):
+
+1. On a machine **with** internet, install and run once so weights cache under
+   `…\site-packages\rapidocr\models\` (e.g. `ch_PP-OCRv5_det_mobile.onnx`,
+   `ch_PP-OCRv5_rec_mobile.onnx`, and the cls model).
+2. Copy that `models\` folder to the same location in the target machine's venv
+   (or copy the whole venv). No further network access is needed — the engine
+   reads the local files (`File exists and is valid: …` in the log confirms it).
+3. Pin dependencies for reproducibility: `pip freeze > requirements.lock.txt`
+   and install with `pip install -r requirements.lock.txt` on the target.
+
+You do **not** need Docker for security or offline use. (And note: a future
+Bloomberg pricing step needs the Terminal's host-local Desktop API, which a
+Linux Docker container cannot easily reach — native Windows is simpler there.)
+
 ## 3. Intel acceleration (optional)
 
 The i5-9500T CPU alone is plenty for the PP-OCRv5 *mobile* models (well under a
