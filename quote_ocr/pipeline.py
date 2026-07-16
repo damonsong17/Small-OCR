@@ -47,10 +47,14 @@ class QuotePipeline:
         return self.section_parser.parse(items, **kw)
 
     def _ocr(self, image: np.ndarray) -> List[TextItem]:
-        if is_active(self.config):
+        upscale = self.config.upscale
+        tw = self.config.target_width
+        if tw and image.shape[1] < tw:
+            upscale = max(upscale, tw / image.shape[1])
+        if is_active(self.config) or upscale != 1.0:
             image = enhance(
                 image,
-                upscale=self.config.upscale,
+                upscale=upscale,
                 grayscale=self.config.grayscale,
                 sharpen=self.config.sharpen,
                 contrast=self.config.contrast,

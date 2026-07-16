@@ -58,6 +58,9 @@ class Config:
     grayscale: bool = False
     sharpen: bool = False
     contrast: float = 1.0       # e.g. 1.5 to boost contrast
+    # Auto-upscale so the image is at least this many pixels wide (0 = off).
+    # Normalises small screenshots to a consistent, OCR-friendly resolution.
+    target_width: int = 0
 
     # A data row must contain a tenor AND at least this many price numbers to be
     # emitted as a quote.

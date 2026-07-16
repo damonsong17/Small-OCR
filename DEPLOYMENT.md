@@ -132,8 +132,10 @@ Tips to help OCR on dense sheets, in order:
 
 1. **`--model server`** — the stronger recognizer; usually the single best fix
    for a misread character.
-2. **`--enhance`** — 2x upscale + grayscale + sharpen + contrast before OCR
-   (or `--upscale 2.5` for a custom factor). Helps small/dense tenor text.
+2. **`--enhance`** — grayscale + sharpen + contrast, and **auto-upscales small
+   images** to ~1800px wide (`--target-width PX` to tune, or `--upscale N` for a
+   fixed factor). Normalises small screenshots so headers like `USD BID` don't
+   get merged into one token and tenor digits stay legible.
 3. **`--tenor-fix`** — a guaranteed override for a known misread. If the
    recognizer reads `1s/2s/3s/6s` as `15/25/35/65`, add:
    ```powershell

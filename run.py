@@ -62,8 +62,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument(
         "--upscale", type=float, default=None, metavar="N",
-        help="Upscale the image N times before OCR (e.g. 2.0). Overrides the "
-             "upscale from --enhance.",
+        help="Upscale the image N times before OCR (e.g. 2.0).",
+    )
+    p.add_argument(
+        "--target-width", type=int, default=None, metavar="PX",
+        help="Auto-upscale small images to at least PX wide before OCR "
+             "(--enhance sets 1800). Normalises small screenshots.",
     )
     p.add_argument(
         "--tenor-fix", default="", metavar="MAP",
@@ -90,7 +94,8 @@ def main(argv=None) -> int:
 
     fmt = args.format or ("json" if args.output.lower().endswith(".json") else "csv")
 
-    upscale = args.upscale if args.upscale is not None else (2.0 if args.enhance else 1.0)
+    upscale = args.upscale if args.upscale is not None else 1.0
+    target_width = args.target_width if args.target_width is not None else (1800 if args.enhance else 0)
     tenor_fixups = {}
     for pair in args.tenor_fix.split(","):
         if "=" in pair:
@@ -105,6 +110,7 @@ def main(argv=None) -> int:
         rec_lang=args.lang,
         supplier=args.supplier,
         upscale=upscale,
+        target_width=target_width,
         grayscale=args.enhance,
         sharpen=args.enhance,
         contrast=1.5 if args.enhance else 1.0,

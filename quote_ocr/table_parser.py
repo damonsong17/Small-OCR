@@ -107,14 +107,20 @@ class TableParser:
         return has_field and not has_price
 
     def _classify(self, text: str) -> Column:
-        currency = self._helper.find_currency(text) or ""
-        if _BID_RE.search(text):
-            return Column(0.0, "bid", text, currency)
-        if _OFFER_RE.search(text):
-            return Column(0.0, "offer", text, currency)
-        if _TENOR_RE.fullmatch(text.strip()) or text.strip().lower() in {"tenor", "term"}:
-            return Column(0.0, "tenor", text, currency)
-        return Column(0.0, "index", text, currency)  # e.g. SOFR / EURIBOR / HIBOR
+        raw = text.strip()
+        # BID / OFFER, possibly glued to a currency code by OCR on small images
+        # (e.g. 'USD BID' -> 'USDBID', 'EUR BID' -> 'EURBID', 'USDOFFER').
+        u = raw.upper().replace(" ", "")
+        m = re.search(r"(OFFER|ASK|BID)$", u)
+        if m:
+            kind = "bid" if m.group(1) == "BID" else "offer"
+            prefix = u[: m.start()]
+            currency = prefix if prefix in self._codes else (self._helper.find_currency(raw) or "")
+            return Column(0.0, kind, text, currency)
+        if _TENOR_RE.fullmatch(raw) or raw.lower() in {"tenor", "term"}:
+            return Column(0.0, "tenor", text, "")
+        # otherwise a benchmark / index label, e.g. SOFR / EURIBOR / CNH HIBOR
+        return Column(0.0, "index", text, self._helper.find_currency(raw) or "")
 
     def _build_groups(self, rows: List[List[TextItem]], header_idx: int):
         header = rows[header_idx]
