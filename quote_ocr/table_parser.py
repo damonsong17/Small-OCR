@@ -206,25 +206,26 @@ class TableParser:
 
     # -- row emission -------------------------------------------------------
     def _emit_row(self, row, groups, col_tol, date, supplier, source_file, page):
-        tenor, _tenor_item = self._row_tenor(row)
+        tenor, tenor_item = self._row_tenor(row)
         if not tenor:
             return []
         row_text = " ".join(it.text for it in row)
 
+        # value columns flattened in x-order (index/bid/offer across all groups)
+        value_cols = [c for g in groups for c in g.columns]
+        colval = self._assign_cells(row, tenor_item, value_cols, col_tol)
+
         out: List[Quote] = []
         for g in groups:
             bid_c, offer_c, idx_c = g.col("bid"), g.col("offer"), g.col("index")
-            bid = self._value_at(row, bid_c, col_tol) if bid_c else ""
-            offer = self._value_at(row, offer_c, col_tol) if offer_c else ""
-            rate = self._value_at(row, idx_c, col_tol) if idx_c else ""
+            bid = colval.get(id(bid_c), "") if bid_c else ""
+            offer = colval.get(id(offer_c), "") if offer_c else ""
+            rate = colval.get(id(idx_c), "") if idx_c else ""
             # Keep the row if it has any data: a benchmark fixing with no
             # tradeable bid/offer (e.g. HKD o/n) is still a real quote.
             if not bid and not offer and not rate:
                 continue
-            used = [
-                self._nearest(row, c.x, col_tol)
-                for c in (bid_c, offer_c) if c
-            ]
+            used = [self._nearest(row, c.x, col_tol) for c in (bid_c, offer_c) if c]
             conf = min((it.score for it in used if it), default=0.0)
             out.append(
                 Quote(
@@ -244,6 +245,34 @@ class TableParser:
                 )
             )
         return out
+
+    def _assign_cells(self, row, tenor_item, value_cols, col_tol) -> dict:
+        """Map each value column -> its value string.
+
+        Prefer *positional* assignment (data tokens in x-order -> columns in
+        x-order) when the counts line up: this is robust to x-drift between the
+        header and the data, which otherwise drops values whose x wandered out
+        of a column's tolerance. Fall back to per-column nearest-x matching when
+        the token count doesn't match (e.g. cells missing with no '-' marker).
+        """
+        toks = [it for it in sorted(row, key=lambda x: x.cx) if it is not tenor_item]
+
+        if len(toks) == len(value_cols):
+            out = {}
+            for col, it in zip(value_cols, toks):
+                out[id(col)] = self._as_value(it.text)
+            return out
+
+        # fallback: independent nearest-x per column
+        return {id(col): self._value_at(row, col, col_tol) for col in value_cols}
+
+    @staticmethod
+    def _as_value(text: str) -> str:
+        t = text.strip()
+        if t in _DASHES:
+            return ""
+        m = _NUMBER_RE.search(t)
+        return _clean_number(m.group(0)) if m else ""
 
     def _row_tenor(self, row):
         """Find the tenor in a row: leftmost cell that *starts* with a tenor.

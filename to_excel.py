@@ -35,11 +35,6 @@ def _read(path):
         return list(csv.DictReader(f))
 
 
-def _orig_tenor(row):
-    raw = (row.get("raw") or "").split()
-    return raw[0] if raw else row["tenor"]
-
-
 def _ordered(values):
     return list(OrderedDict.fromkeys(values))
 
@@ -66,12 +61,16 @@ def build(rows):
 
 
 def _tenor_map(rows):
-    """normalized tenor -> (display token, order index) preserving file order."""
+    """Ordered map of tenor -> display label, preserving file order.
+
+    Uses the authoritative 'tenor' column (already normalised / OCR-corrected),
+    not the verbatim 'raw' text which may contain the misread (e.g. '25').
+    """
     m = OrderedDict()
     for row in rows:
         key = row["tenor"]
-        if key not in m:
-            m[key] = _orig_tenor(row)
+        if key and key not in m:
+            m[key] = key
     return m
 
 
