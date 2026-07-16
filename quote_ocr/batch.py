@@ -40,13 +40,15 @@ def parse_filename(stem: str):
     return m.group("source"), f"{d[:4]}-{d[4:6]}-{d[6:8]}"
 
 
-def _write_xlsx(rows, path: str) -> bool:
+def _xlsx_builder():
+    """Return to_excel.build if Excel export is available, else (None, reason)."""
     try:
-        from to_excel import build  # optional (needs openpyxl)
-    except Exception:
-        return False
-    build(rows).save(path)
-    return True
+        from to_excel import build  # imports openpyxl at module top
+        return build, ""
+    except ImportError as e:
+        return None, f"{e} (run: pip install openpyxl)"
+    except Exception as e:  # pragma: no cover
+        return None, str(e)
 
 
 def ingest(
@@ -66,6 +68,14 @@ def ingest(
 
     pipeline = QuotePipeline(config or Config())
     summary = {"processed": 0, "skipped": 0, "unnamed": 0, "quotes": 0}
+
+    xlsx_build = None
+    if make_xlsx:
+        xlsx_build, why = _xlsx_builder()
+        if xlsx_build is None:
+            print(f"  ! Excel export unavailable, skipping .xlsx (CSV/DB still "
+                  f"written): {why}")
+            make_xlsx = False
 
     inbox_path = Path(inbox)
     if not inbox_path.exists():
@@ -111,8 +121,10 @@ def ingest(
 
             stem = f"{source}_{date}"
             to_csv(quotes, str(csv_dir / f"{stem}.csv"))
-            if make_xlsx:
-                _write_xlsx([q.as_row() for q in quotes], str(xlsx_dir / f"{stem}.xlsx"))
+            if make_xlsx and xlsx_build is not None:
+                xlsx_build([q.as_row() for q in quotes]).save(
+                    str(xlsx_dir / f"{stem}.xlsx")
+                )
 
             summary["processed"] += 1
             summary["quotes"] += len(quotes)

@@ -186,15 +186,33 @@ def _dcell(ws, r, c, val, bold=False, fill=None):
         cell.fill = fill
 
 
-def main(argv=None):
-    p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("csv", help="Long-format quotes CSV from run.py")
-    p.add_argument("-o", "--output", default=None, help="Output .xlsx path")
-    args = p.parse_args(argv)
-    out = args.output or (args.csv.rsplit(".", 1)[0] + ".xlsx")
-    wb = build(_read(args.csv))
-    wb.save(out)
+def _convert(csv_path: str, out: str) -> None:
+    build(_read(csv_path)).save(out)
     print(f"Wrote {out}")
+
+
+def main(argv=None):
+    import glob
+    import os
+
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("csv", help="A quotes CSV, or a folder of CSVs to convert.")
+    p.add_argument("-o", "--output", default=None,
+                   help="Output .xlsx (single CSV) or output folder (for a dir).")
+    args = p.parse_args(argv)
+
+    if os.path.isdir(args.csv):
+        out_dir = args.output or args.csv
+        os.makedirs(out_dir, exist_ok=True)
+        csvs = sorted(glob.glob(os.path.join(args.csv, "*.csv")))
+        if not csvs:
+            print(f"No .csv files in {args.csv}")
+            return
+        for c in csvs:
+            stem = os.path.splitext(os.path.basename(c))[0]
+            _convert(c, os.path.join(out_dir, stem + ".xlsx"))
+    else:
+        _convert(args.csv, args.output or (args.csv.rsplit(".", 1)[0] + ".xlsx"))
 
 
 if __name__ == "__main__":
