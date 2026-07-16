@@ -25,7 +25,8 @@ from .parser import QuoteParser, _NUMBER_RE, _TENOR_RE, _clean_number, canonical
 
 _BID_RE = re.compile(r"(?i)\bbid\b")
 _OFFER_RE = re.compile(r"(?i)\b(offer|ask)\b")
-_DASHES = {"-", "--", "–", "—", "―", ""}
+_DASHES = {"-", "--", "–", "—", "―", "=", ""}
+_KIND_ORDER = {"index": 0, "bid": 1, "offer": 2}
 
 
 @dataclass
@@ -162,8 +163,56 @@ class TableParser:
             cur.columns.append(c)
             last_kind = c.kind
 
+        self._normalize_groups(groups)
         self._label_groups(groups, group_labels, category)
         return groups, col_tol
+
+    def _normalize_groups(self, groups: List["Group"]) -> None:
+        """Force every group to the dominant column shape.
+
+        OCR sometimes drops a header cell (e.g. one market's 'USD BID'), leaving
+        that group short a column. Since all groups in a block share the same
+        shape, we reconstruct any missing column (with an x interpolated from the
+        complete groups) so the column count matches the data and positional
+        assignment can place every value.
+        """
+        if not groups:
+            return
+        patterns = [
+            tuple(sorted({c.kind for c in g.columns}, key=lambda k: _KIND_ORDER.get(k, 9)))
+            for g in groups
+        ]
+        template = max(patterns, key=len)
+        if len(template) < 2:
+            return
+        complete = [g for g, p in zip(groups, patterns) if p == template]
+        if not complete:
+            return
+        # average x-offset of each kind relative to the group's first template kind
+        offs = {k: [] for k in template}
+        for g in complete:
+            cmap = {c.kind: c for c in g.columns}
+            base = cmap[template[0]].x
+            for k in template:
+                offs[k].append(cmap[k].x - base)
+        offset = {k: sum(v) / len(v) for k, v in offs.items()}
+
+        for g in groups:
+            cmap = {c.kind: c for c in g.columns}
+            if set(cmap) == set(template):
+                g.columns = sorted(g.columns, key=lambda c: c.x)
+                continue
+            anchor = next((k for k in template if k in cmap), None)
+            if anchor is None:
+                continue
+            base = cmap[anchor].x - offset[anchor]
+            rebuilt = []
+            for k in template:
+                if k in cmap:
+                    rebuilt.append(cmap[k])
+                else:
+                    rebuilt.append(Column(x=base + offset[k], kind=k, text="", currency=""))
+            g.columns = sorted(rebuilt, key=lambda c: c.x)
 
     def _merge_currency_qualifiers(self, cols: List[Column]) -> List[Column]:
         """Fold a bare currency token into the following BID/OFFER column.
