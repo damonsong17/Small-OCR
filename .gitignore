@@ -25,3 +25,8 @@ quotes.json
 /output/
 /data/
 *.db
+
+# Offline bundle artifacts (built per-machine)
+/bundle/
+*.whl
+requirements.lock.txt
