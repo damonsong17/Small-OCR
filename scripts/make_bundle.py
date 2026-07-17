@@ -68,24 +68,58 @@ def main():
               "Download it on a machine that can reach Bloomberg, or install it "
               "on the target from the terminal's API SDK. See DEPLOYMENT_OFFLINE.md")
 
-    # 4) copy cached RapidOCR model weights (trigger a run first if empty)
+    # 4) stage RapidOCR model weights. Always warm the model ingest.py uses by
+    #    default (PP-OCRv5 mobile) so the offline box never tries to download,
+    #    then copy every cached .onnx (covers server too if present).
     try:
         import rapidocr
         src = Path(rapidocr.__file__).parent / "models"
+        print("  ensuring the default (mobile) OCR weights are cached ...")
+        _warm_models()
         onnx = list(src.glob("*.onnx")) if src.exists() else []
-        if not onnx:
-            print("  models not cached yet -- running OCR once to fetch them ...")
-            _warm_models()
-            onnx = list(src.glob("*.onnx"))
         for f in onnx:
             shutil.copy2(f, MODELS / f.name)
-        print(f"copied {len(onnx)} model file(s) to {MODELS}")
+        names = ", ".join(f.name for f in onnx)
+        print(f"copied {len(onnx)} model file(s) to {MODELS}: {names}")
+        if not any("mobile" in f.name.lower() for f in onnx):
+            print("  ! WARNING: no 'mobile' model staged -- ingest.py defaults to "
+                  "mobile and will try to download it offline. Run one "
+                  "`python ingest.py ... --model mobile` online first, then rebuild.")
     except Exception as e:  # pragma: no cover
         print(f"  ! could not stage models automatically: {e}")
 
+    _preflight()
     print(f"\nDone. Bundle at: {BUNDLE}")
     print("Copy the 'bundle' folder + this repo to the target, then run "
           "scripts/install_bundle.py there.")
+
+
+def _preflight():
+    """Fail loudly here (with internet) rather than on the offline box."""
+    print("\n--- preflight ---")
+    ok = True
+    sdists = [f.name for f in WHEELS.glob("*") if f.suffix not in (".whl",)]
+    if sdists:
+        ok = False
+        print(f"  FAIL: non-wheel files in wheelhouse (offline box would compile): {sdists}")
+    else:
+        print(f"  OK: wheelhouse is all wheels ({len(list(WHEELS.glob('*.whl')))}).")
+
+    models = list(MODELS.glob("*.onnx"))
+    if any("mobile" in m.name.lower() for m in models):
+        print(f"  OK: mobile OCR weights staged ({len(models)} files).")
+    else:
+        ok = False
+        print("  FAIL: mobile OCR weights not staged (ingest.py defaults to mobile).")
+
+    if any(WHEELS.glob("blpapi*")):
+        print("  OK: blpapi wheel present.")
+    else:
+        print("  note: no blpapi wheel (only needed for the Bloomberg step).")
+
+    print(f"  Python for this bundle: {sys.version.split()[0]} / {sys.platform} "
+          f"-- the target MUST match.")
+    print("  " + ("PREFLIGHT PASSED" if ok else ">>> PREFLIGHT FAILED - fix before copying <<<"))
 
 
 def _warm_models():
