@@ -35,6 +35,16 @@ def main():
                  f"Copy the 'bundle' folder from make_bundle.py first.")
 
     pip = [sys.executable, "-m", "pip"]
+
+    # Bootstrap the build backend offline first (a fresh venv may lack
+    # setuptools/wheel; without them any residual sdist build fails).
+    for pkg in ("pip", "setuptools", "wheel"):
+        if any(WHEELS.glob(pkg + "-*")):
+            try:
+                run(pip + ["install", "--no-index", "--find-links", str(WHEELS), pkg])
+            except subprocess.CalledProcessError:
+                pass
+
     run(pip + ["install", "--no-index", "--find-links", str(WHEELS), "-r", str(LOCK)])
 
     # optionally blpapi if its wheel was bundled

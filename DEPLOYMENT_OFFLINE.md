@@ -13,8 +13,18 @@ the offline install works there, it works on the internal box.
 ## 0. Prerequisite (read this first)
 
 The networked "builder" machine and the air-gapped "target" machine must have
-the **same Python version** (e.g. both Python 3.11, 64-bit Windows). Check with
-`python --version` on both. Wheels are Python-version- and OS-specific.
+the **same Python version + OS** (e.g. both Python 3.12, 64-bit Windows). Check
+with `python --version` on **both**. Wheels are Python-version- and OS-specific,
+so a bundle built on 3.13 will not install on 3.14.
+
+**Recommended: standardise on Python 3.12** (or 3.11). Avoid the very latest
+(e.g. 3.14) — binary packages like onnxruntime/opencv/pymupdf often don't ship
+wheels for a brand-new Python yet, so the bundle can't even be built. If the
+target has 3.14, install 3.12 there (carry the installer) and make a 3.12 venv.
+
+The bundler pre-builds a wheel for **every** dependency (including source-only
+ones like antlr4-python3-runtime), so the offline machine never compiles and
+never needs a network. This still requires the Python versions to match.
 
 ## 1. On the NETWORKED machine — build the bundle
 

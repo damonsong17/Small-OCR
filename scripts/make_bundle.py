@@ -51,8 +51,13 @@ def main():
         subprocess.check_call(pip + ["freeze"], stdout=f)
     print(f"wrote {LOCK}")
 
-    # 2) download all wheels for the lock
-    run(pip + ["download", "-r", str(LOCK), "-d", str(WHEELS)])
+    # 2) BUILD a wheel for every dependency. Unlike `pip download`, `pip wheel`
+    #    turns source-only packages (e.g. antlr4-python3-runtime) into wheels
+    #    here (with internet), so the offline target never has to compile.
+    run(pip + ["wheel", "-r", str(LOCK), "-w", str(WHEELS)])
+    #    Include pip + the build backend so a fresh venv can bootstrap offline
+    #    (Python 3.12+ venvs don't ship setuptools).
+    run(pip + ["wheel", "pip", "setuptools", "wheel", "-w", str(WHEELS)])
 
     # 3) Bloomberg blpapi (best effort; needs Bloomberg's index reachable)
     try:
