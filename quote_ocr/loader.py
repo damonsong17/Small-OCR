@@ -43,13 +43,25 @@ def _load_pdf(path: Path, dpi: int) -> List[Tuple[int, np.ndarray]]:
             "PDF input requires PyMuPDF. Install it with:  pip install pymupdf"
         ) from exc
 
+    import io
+
     pages: List[Tuple[int, np.ndarray]] = []
     zoom = dpi / 72.0
     matrix = fitz.Matrix(zoom, zoom)
     with fitz.open(path) as doc:
         for i, page in enumerate(doc, start=1):
-            pix = page.get_pixmap(matrix=matrix)
-            img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+            img = None
+            # Image-only page (a scan saved as PDF): use the embedded image at
+            # its native resolution rather than re-rasterising the page, which
+            # only interpolates and adds white margins.
+            if not page.get_text().strip():
+                imgs = page.get_images(full=True)
+                if len(imgs) == 1:
+                    data = doc.extract_image(imgs[0][0])
+                    img = Image.open(io.BytesIO(data["image"])).convert("RGB")
+            if img is None:
+                pix = page.get_pixmap(matrix=matrix)
+                img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
             pages.append((i, np.asarray(img)))
     return pages
 
