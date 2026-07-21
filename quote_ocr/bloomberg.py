@@ -153,3 +153,19 @@ def demo_mock_usdcnh() -> MockBloomberg:
         "USDCNH6M Curncy": {"PX_LAST": -690.0},
         "USDCNH12M Curncy": {"PX_LAST": -1320.0},
     })
+
+
+def demo_mock_fx() -> MockBloomberg:
+    """Canned multi-pair FX (USDCNH + EURUSD) for offline arb testing."""
+    return MockBloomberg(data={
+        "USDCNH Curncy": {"PX_LAST": 7.1850},
+        "USDCNH1M Curncy": {"PX_LAST": -120.0},
+        "USDCNH3M Curncy": {"PX_LAST": -350.0},
+        "USDCNH6M Curncy": {"PX_LAST": -690.0},
+        "USDCNH12M Curncy": {"PX_LAST": -1320.0},
+        "EURUSD Curncy": {"PX_LAST": 1.0850},
+        "EURUSD1M Curncy": {"PX_LAST": 9.0},
+        "EURUSD3M Curncy": {"PX_LAST": 26.0},
+        "EURUSD6M Curncy": {"PX_LAST": 50.0},
+        "EURUSD12M Curncy": {"PX_LAST": 95.0},
+    })
