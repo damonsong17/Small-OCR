@@ -15,12 +15,25 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
-# How to build securities for a pair. {pair} -> e.g. USDCNH.
-# Verify on the terminal: spot ticker, and the per-tenor forward-points ticker.
+# Ticker/field conventions, confirmed with the Bloomberg Help Desk
+# (2026-07-21, ref# H#1330770666) and the official blpapi examples
+# (github.com/msitt/blpapi-python). See BLPAPI_REFERENCE.md.
+#
+#   - FX is two-sided: use PX_BID / PX_ASK (not PX_LAST).
+#   - spot     : "USDCNH Curncy"
+#   - outright : forward outright ticker uses the non-USD leg + '+' + tenor,
+#                e.g. "CNH+1M Curncy" (USDCNH), "EUR+1M Curncy" (EURUSD).
+#   - points   : forward points ticker, same but no '+', e.g. "CNH1M Curncy".
+#   Excel equivalents: =BFXFORWARD("USDCNH","1M","BidOutright"/"AskOutright"
+#   /"BidPoints"/"AskPoints"). Those toolkit analytics are NOT callable from
+#   blpapi -- pull the tickers and compute CIP yourself.
+#
+# VERIFY the exact roots on your terminal (FWCV/FRD) and adjust here.
 FX_TICKERS = {
-    "spot": "{pair} Curncy",              # PX_LAST = spot
-    "points": "{pair}{tenor} Curncy",     # PX_LAST = outright or points (VERIFY)
-    "field": "PX_LAST",
+    "spot": "{pair} Curncy",
+    "outright": "{fwd}+{tenor} Curncy",
+    "points": "{fwd}{tenor} Curncy",
+    "fields": ["PX_BID", "PX_ASK"],
 }
 
 # Bloomberg tenor codes for the common buckets.
@@ -120,52 +133,76 @@ class MockBloomberg:
 @dataclass
 class FxPoint:
     tenor: str
-    spot: Optional[float]
-    points: Optional[float]  # raw value of the per-tenor ticker (verify meaning)
+    spot: Optional[float]        # spot mid
+    points: Optional[float]      # forward points mid (outright - spot) * pip
+    spot_bid: Optional[float] = None
+    spot_ask: Optional[float] = None
+    fwd_bid: Optional[float] = None   # forward outright bid
+    fwd_ask: Optional[float] = None   # forward outright ask
 
 
-def build_fx_market(client, pair: str, tenors: List[str]) -> Dict[str, FxPoint]:
-    """Pull spot + per-tenor forward values for a pair into a tenor->FxPoint map."""
-    field_name = FX_TICKERS["field"]
+def _fwd_key(pair: str) -> str:
+    """Bloomberg keys FX forward tickers off the non-USD leg (CNH, EUR, ...)."""
+    base, quote = pair[:3], pair[3:]
+    return quote if base == "USD" else base
+
+
+def build_fx_market(client, pair: str, tenors: List[str], pip: float = 10000.0) -> Dict[str, FxPoint]:
+    """Pull spot + forward outright (bid/ask) and derive points, per tenor."""
+    fields = FX_TICKERS["fields"]
     spot_sec = FX_TICKERS["spot"].format(pair=pair)
+    fwd = _fwd_key(pair)
     secs = [spot_sec]
     per_tenor = {}
     for t in tenors:
         code = TENOR_CODE.get(t, t)
-        sec = FX_TICKERS["points"].format(pair=pair, tenor=code)
+        sec = FX_TICKERS["outright"].format(fwd=fwd, tenor=code)
         per_tenor[t] = sec
         secs.append(sec)
 
-    ref = client.reference(secs, [field_name])
-    spot = (ref.get(spot_sec) or {}).get(field_name)
+    ref = client.reference(secs, fields)
+    sd = ref.get(spot_sec) or {}
+    s_bid, s_ask = sd.get("PX_BID"), sd.get("PX_ASK")
+    spot = _mid(s_bid, s_ask)
+
     out = {}
     for t, sec in per_tenor.items():
-        out[t] = FxPoint(tenor=t, spot=spot, points=(ref.get(sec) or {}).get(field_name))
+        fd = ref.get(sec) or {}
+        f_bid, f_ask = fd.get("PX_BID"), fd.get("PX_ASK")
+        fwd_mid = _mid(f_bid, f_ask)
+        points = (fwd_mid - spot) * pip if (fwd_mid is not None and spot is not None) else None
+        out[t] = FxPoint(tenor=t, spot=spot, points=points,
+                         spot_bid=s_bid, spot_ask=s_ask, fwd_bid=f_bid, fwd_ask=f_ask)
     return out
 
 
-def demo_mock_usdcnh() -> MockBloomberg:
-    """Canned USDCNH spot + 1M/3M/6M/1Y forward points for offline testing."""
-    return MockBloomberg(data={
-        "USDCNH Curncy": {"PX_LAST": 7.1850},
-        "USDCNH1M Curncy": {"PX_LAST": -120.0},
-        "USDCNH3M Curncy": {"PX_LAST": -350.0},
-        "USDCNH6M Curncy": {"PX_LAST": -690.0},
-        "USDCNH12M Curncy": {"PX_LAST": -1320.0},
-    })
+def _mid(bid, ask):
+    if bid is not None and ask is not None:
+        return (bid + ask) / 2
+    return bid if bid is not None else ask
+
+
+def _quote(bid, ask):
+    return {"PX_BID": bid, "PX_ASK": ask}
 
 
 def demo_mock_fx() -> MockBloomberg:
-    """Canned multi-pair FX (USDCNH + EURUSD) for offline arb testing."""
+    """Canned USDCNH + EURUSD spot + forward OUTRIGHTS (bid/ask) for offline arb.
+
+    Uses the Help-Desk ticker convention: spot '<PAIR> Curncy', outrights
+    '<non-USD leg>+<tenor> Curncy' (e.g. CNH+1M, EUR+3M), fields PX_BID/PX_ASK.
+    """
     return MockBloomberg(data={
-        "USDCNH Curncy": {"PX_LAST": 7.1850},
-        "USDCNH1M Curncy": {"PX_LAST": -120.0},
-        "USDCNH3M Curncy": {"PX_LAST": -350.0},
-        "USDCNH6M Curncy": {"PX_LAST": -690.0},
-        "USDCNH12M Curncy": {"PX_LAST": -1320.0},
-        "EURUSD Curncy": {"PX_LAST": 1.0850},
-        "EURUSD1M Curncy": {"PX_LAST": 9.0},
-        "EURUSD3M Curncy": {"PX_LAST": 26.0},
-        "EURUSD6M Curncy": {"PX_LAST": 50.0},
-        "EURUSD12M Curncy": {"PX_LAST": 95.0},
+        # USDCNH: forward discount (USD rate > CNH rate) -> outright < spot
+        "USDCNH Curncy": _quote(7.1840, 7.1860),
+        "CNH+1M Curncy": _quote(7.1725, 7.1735),
+        "CNH+3M Curncy": _quote(7.1495, 7.1505),
+        "CNH+6M Curncy": _quote(7.1155, 7.1165),
+        "CNH+12M Curncy": _quote(7.0520, 7.0540),
+        # EURUSD: forward premium (USD rate > EUR rate) -> outright > spot
+        "EURUSD Curncy": _quote(1.08495, 1.08505),
+        "EUR+1M Curncy": _quote(1.08585, 1.08595),
+        "EUR+3M Curncy": _quote(1.08755, 1.08765),
+        "EUR+6M Curncy": _quote(1.08995, 1.09005),
+        "EUR+12M Curncy": _quote(1.09445, 1.09455),
     })

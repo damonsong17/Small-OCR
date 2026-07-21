@@ -15,7 +15,7 @@ from __future__ import annotations
 import argparse
 
 from quote_ocr import pricing
-from quote_ocr.bloomberg import BloombergClient, build_fx_market, demo_mock_usdcnh
+from quote_ocr.bloomberg import BloombergClient, build_fx_market, demo_mock_fx
 
 
 def main(argv=None):
@@ -42,7 +42,7 @@ def main(argv=None):
         quote_rates = {"1M": 0.0130, "3M": 0.0135, "6M": 0.0140, "1Y": 0.0130}
 
     # 2) FX market data from Bloomberg (mock offline, or --live terminal)
-    client = BloombergClient() if args.live else demo_mock_usdcnh()
+    client = BloombergClient() if args.live else demo_mock_fx()
     with client as c:
         fx = build_fx_market(c, args.pair, tenors)
 
