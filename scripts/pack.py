@@ -7,9 +7,9 @@ after installing deps:
     pip install -r requirements.txt
     python scripts/pack.py
 
-Produces  Small-OCR_offline.zip  containing the source + bundle\ (wheels +
-model weights + lock), and EXCLUDING .venv, .git, caches, and local data. Copy
-that one zip to the target, unzip, then run scripts/install_bundle.py there.
+Produces  Small-OCR_offline.zip  containing the source + the bundle folder
+(wheels + model weights + lock), and EXCLUDING .venv, .git, caches, and local
+data. Copy that one zip to the target, unzip, run scripts/install_bundle.py.
 
 Pass --no-build to skip rebuilding the bundle (reuse an existing bundle\).
 """

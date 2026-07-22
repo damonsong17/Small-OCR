@@ -38,6 +38,10 @@ def run(cmd):
     subprocess.check_call(cmd)
 
 
+def _is_blpapi(req_line: str) -> bool:
+    return req_line.strip().lower().startswith("blpapi")
+
+
 def main():
     WHEELS.mkdir(parents=True, exist_ok=True)
     MODELS.mkdir(parents=True, exist_ok=True)
@@ -46,27 +50,40 @@ def main():
     print(f"\nPython {sys.version.split()[0]} on {sys.platform} "
           f"-- the target machine must match this.\n")
 
-    # 1) lock the working environment
+    # 1) lock the working environment (full list, used for the offline install)
     with open(LOCK, "w") as f:
         subprocess.check_call(pip + ["freeze"], stdout=f)
     print(f"wrote {LOCK}")
 
-    # 2) BUILD a wheel for every dependency. Unlike `pip download`, `pip wheel`
-    #    turns source-only packages (e.g. antlr4-python3-runtime) into wheels
-    #    here (with internet), so the offline target never has to compile.
-    run(pip + ["wheel", "-r", str(LOCK), "-w", str(WHEELS)])
+    # 2) BUILD a wheel for every dependency EXCEPT blpapi (blpapi lives on
+    #    Bloomberg's private index, not PyPI, so `pip wheel` from PyPI would
+    #    fail on it). Everything else is built here (turns source-only packages
+    #    like antlr4-python3-runtime into wheels) so the target never compiles.
+    lines = LOCK.read_text().splitlines()
+    build_reqs = [ln for ln in lines if ln.strip() and not _is_blpapi(ln)]
+    build_file = BUNDLE / "_build_reqs.txt"
+    build_file.write_text("\n".join(build_reqs) + "\n")
+    run(pip + ["wheel", "-r", str(build_file), "-w", str(WHEELS)])
     #    Include pip + the build backend so a fresh venv can bootstrap offline
     #    (Python 3.12+ venvs don't ship setuptools).
     run(pip + ["wheel", "pip", "setuptools", "wheel", "-w", str(WHEELS)])
 
-    # 3) Bloomberg blpapi (best effort; needs Bloomberg's index reachable)
-    try:
-        run(pip + ["download", "blpapi", "--index-url", BLOOMBERG_INDEX,
-                   "-d", str(WHEELS)])
-    except subprocess.CalledProcessError:
-        print("  ! blpapi download failed (Bloomberg index not reachable here). "
-              "Download it on a machine that can reach Bloomberg, or install it "
-              "on the target from the terminal's API SDK. See DEPLOYMENT_OFFLINE.md")
+    # 3) blpapi: from Bloomberg's index (skip if a wheel is already staged).
+    if not any(WHEELS.glob("blpapi*")):
+        try:
+            run(pip + ["download", "blpapi", "--index-url", BLOOMBERG_INDEX,
+                       "-d", str(WHEELS)])
+        except subprocess.CalledProcessError:
+            pass
+    if not any(WHEELS.glob("blpapi*")):
+        # Can't get blpapi here -> drop it from the lock so the OFFLINE install
+        # of everything else still succeeds; the Bloomberg step is added later.
+        kept = [ln for ln in lines if not _is_blpapi(ln)]
+        LOCK.write_text("\n".join(kept) + "\n")
+        print("  ! blpapi wheel unavailable -> removed from lock. Add it on the "
+              "target from the Bloomberg API SDK before using the pricing step.")
+    else:
+        print("  blpapi wheel present in bundle.")
 
     # 4) stage RapidOCR model weights. Always warm the model ingest.py uses by
     #    default (PP-OCRv5 mobile) so the offline box never tries to download,
