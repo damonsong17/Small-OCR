@@ -1,0 +1,78 @@
+{
+  "name": "NSFR — Basel III defaults",
+  "version": "2026-07",
+  "source": "BCBS NSFR standard (consolidated framework NSF20/30). Copy and edit for your regulator's overlay.",
+  "_note": "ASF applies to capital and liabilities; RSF to assets and off-balance-sheet exposures. First matching rule wins.",
+  "params": {
+    "minimum_ratio": 1.0,
+    "long_term_days": 365,
+    "short_term_days": 180
+  },
+
+  "asf": {
+    "default_factor": 0.0,
+    "default_label": "Other liability — 0% ASF",
+    "rules": [
+      {"id": "asf_capital", "label": "Regulatory capital", "factor": 1.0,
+       "when": {"side": "CAPITAL"}},
+      {"id": "asf_long", "label": "Liabilities with residual maturity ≥ 1 year", "factor": 1.0,
+       "when": {"residual_days": {"gte": 365}}},
+      {"id": "asf_retail_stable", "label": "Stable retail / SME deposits < 1 year", "factor": 0.95,
+       "when": {"counterparty_type": ["RETAIL", "SME"], "stable": true}},
+      {"id": "asf_retail_insured", "label": "Insured retail / SME deposits < 1 year", "factor": 0.95,
+       "when": {"counterparty_type": ["RETAIL", "SME"], "insured": true}},
+      {"id": "asf_retail", "label": "Less stable retail / SME deposits < 1 year", "factor": 0.9,
+       "when": {"counterparty_type": ["RETAIL", "SME"]}},
+      {"id": "asf_operational", "label": "Operational deposits", "factor": 0.5,
+       "when": {"operational": true}},
+      {"id": "asf_corporate", "label": "Funding from corporates, sovereigns, PSEs < 1 year", "factor": 0.5,
+       "when": {"counterparty_type": ["CORPORATE", "SOVEREIGN", "PSE", "CENTRAL_BANK"]}},
+      {"id": "asf_fi_6_12", "label": "Financial-institution funding, 6 months to 1 year", "factor": 0.5,
+       "when": {"counterparty_type": ["FI", "INTERNAL"], "residual_days": {"gte": 180}}},
+      {"id": "asf_fi_short", "label": "Financial-institution funding < 6 months", "factor": 0.0,
+       "when": {"counterparty_type": ["FI", "INTERNAL"]}}
+    ]
+  },
+
+  "rsf": {
+    "default_factor": 1.0,
+    "default_label": "Other asset — 100% RSF",
+    "rules": [
+      {"id": "rsf_cash", "label": "Cash and central bank reserves", "factor": 0.0,
+       "when": {"product": ["CASH", "CENTRAL_BANK_RESERVE"], "encumbered": false}},
+      {"id": "rsf_l1", "label": "Unencumbered Level 1 assets", "factor": 0.05,
+       "when": {"hqla_level": "L1", "encumbered": false}},
+      {"id": "rsf_fi_secured_l1", "label": "Loans to financial institutions < 6m secured by Level 1", "factor": 0.1,
+       "when": {"counterparty_type": ["FI"], "residual_days": {"lt": 180},
+                "secured": true, "collateral_level": "L1"}},
+      {"id": "rsf_fi_short", "label": "Loans and placements with financial institutions < 6 months", "factor": 0.15,
+       "when": {"counterparty_type": ["FI", "CENTRAL_BANK", "INTERNAL"], "residual_days": {"lt": 180}}},
+      {"id": "rsf_l2a", "label": "Unencumbered Level 2A assets", "factor": 0.15,
+       "when": {"hqla_level": "L2A", "encumbered": false}},
+      {"id": "rsf_l2b", "label": "Unencumbered Level 2B assets", "factor": 0.5,
+       "when": {"hqla_level": "L2B", "encumbered": false}},
+      {"id": "rsf_fi_6_12", "label": "Loans to financial institutions, 6 months to 1 year", "factor": 0.5,
+       "when": {"counterparty_type": ["FI", "CENTRAL_BANK", "INTERNAL"], "residual_days": {"lt": 365}}},
+      {"id": "rsf_nonfi_short", "label": "Loans to corporates, retail and SMEs < 1 year", "factor": 0.5,
+       "when": {"counterparty_type": ["CORPORATE", "RETAIL", "SME", "SOVEREIGN", "PSE"],
+                "residual_days": {"lt": 365}}},
+      {"id": "rsf_low_rw", "label": "Performing loans ≥ 1 year, risk weight ≤ 35%", "factor": 0.65,
+       "when": {"residual_days": {"gte": 365}, "risk_weight": {"lte": 0.35}}},
+      {"id": "rsf_long", "label": "Other performing loans ≥ 1 year", "factor": 0.85,
+       "when": {"residual_days": {"gte": 365}}},
+      {"id": "rsf_encumbered_long", "label": "Assets encumbered for ≥ 1 year", "factor": 1.0,
+       "when": {"encumbered": true}}
+    ]
+  },
+
+  "rsf_offbalance": {
+    "default_factor": 0.05,
+    "default_label": "Off-balance-sheet commitment",
+    "rules": [
+      {"id": "rsf_obs_committed", "label": "Irrevocable and conditionally revocable credit and liquidity facilities", "factor": 0.05,
+       "when": {"facility_type": ["CREDIT", "LIQUIDITY"]}},
+      {"id": "rsf_obs_trade", "label": "Trade finance and guarantees", "factor": 0.05,
+       "when": {"facility_type": ["TRADE_FINANCE", "GUARANTEE"]}}
+    ]
+  }
+}

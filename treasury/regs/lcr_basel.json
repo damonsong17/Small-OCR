@@ -1,0 +1,116 @@
+{
+  "name": "LCR — Basel III defaults",
+  "version": "2026-07",
+  "source": "BCBS LCR standard (consolidated framework LCR20/30/40). Jurisdictional overlays (HKMA, FINMA, EBA) differ — copy this file, edit the factors, point settings.json at it.",
+  "_note": "First matching rule wins, top to bottom. Every weighted figure in the dashboard reports the rule id that produced it.",
+  "params": {
+    "horizon_days": 30,
+    "inflow_cap": 0.75,
+    "minimum_ratio": 1.0
+  },
+
+  "hqla": {
+    "default_factor": 0.0,
+    "default_label": "Not eligible as HQLA",
+    "rules": [
+      {"id": "l1_cash", "label": "Level 1 — cash and central bank reserves", "factor": 1.0,
+       "when": {"hqla_level": "L1", "product": ["CASH", "CENTRAL_BANK_RESERVE"]}},
+      {"id": "l1", "label": "Level 1 — 0% risk-weight sovereign", "factor": 1.0,
+       "when": {"hqla_level": "L1"}, "note": "no haircut"},
+      {"id": "l2a", "label": "Level 2A — 15% haircut", "factor": 0.85,
+       "when": {"hqla_level": "L2A"}},
+      {"id": "l2b_rmbs", "label": "Level 2B — RMBS, 25% haircut", "factor": 0.75,
+       "when": {"hqla_level": "L2B", "issuer_type": "RMBS"}},
+      {"id": "l2b", "label": "Level 2B — 50% haircut", "factor": 0.5,
+       "when": {"hqla_level": "L2B"}}
+    ]
+  },
+
+  "outflows": {
+    "default_factor": 1.0,
+    "default_label": "Other liability — 100% (conservative default)",
+    "rules": [
+      {"id": "secured_cb", "label": "Secured funding from a central bank", "factor": 0.0,
+       "when": {"secured": true, "counterparty_type": "CENTRAL_BANK"}},
+      {"id": "secured_l1", "label": "Secured funding backed by Level 1", "factor": 0.0,
+       "when": {"secured": true, "collateral_level": "L1"}},
+      {"id": "secured_l2a", "label": "Secured funding backed by Level 2A", "factor": 0.15,
+       "when": {"secured": true, "collateral_level": "L2A"}},
+      {"id": "secured_l2b", "label": "Secured funding backed by Level 2B", "factor": 0.5,
+       "when": {"secured": true, "collateral_level": "L2B"}},
+      {"id": "secured_other_nonfi", "label": "Secured funding, other collateral, non-financial counterparty", "factor": 0.25,
+       "when": {"secured": true, "counterparty_type": ["CORPORATE", "SME", "SOVEREIGN", "PSE"]}},
+      {"id": "secured_other", "label": "Secured funding, other collateral", "factor": 1.0,
+       "when": {"secured": true}},
+
+      {"id": "retail_stable", "label": "Retail deposits — stable (insured)", "factor": 0.05,
+       "when": {"counterparty_type": ["RETAIL", "SME"], "stable": true}},
+      {"id": "retail_insured", "label": "Retail deposits — insured", "factor": 0.05,
+       "when": {"counterparty_type": ["RETAIL", "SME"], "insured": true}},
+      {"id": "retail_less_stable", "label": "Retail / small-business deposits — less stable", "factor": 0.1,
+       "when": {"counterparty_type": ["RETAIL", "SME"]}},
+
+      {"id": "operational_insured", "label": "Operational deposits — insured portion", "factor": 0.05,
+       "when": {"operational": true, "insured": true}},
+      {"id": "operational", "label": "Operational deposits (clearing, custody, cash management)", "factor": 0.25,
+       "when": {"operational": true}},
+
+      {"id": "wholesale_nonfi", "label": "Non-operational deposits — corporate, sovereign, PSE", "factor": 0.4,
+       "when": {"counterparty_type": ["CORPORATE", "SOVEREIGN", "PSE", "CENTRAL_BANK"]}},
+      {"id": "wholesale_fi", "label": "Non-operational funding — financial institutions", "factor": 1.0,
+       "when": {"counterparty_type": ["FI"]}},
+      {"id": "intragroup", "label": "Intragroup / head-office funding", "factor": 1.0,
+       "when": {"counterparty_type": ["INTERNAL"]},
+       "note": "Basel gives no preferential treatment; some regulators allow one."}
+    ]
+  },
+
+  "commitments": {
+    "default_factor": 0.1,
+    "default_label": "Other committed facility",
+    "rules": [
+      {"id": "cf_retail", "label": "Undrawn facility — retail / small business", "factor": 0.05,
+       "when": {"counterparty_type": ["RETAIL", "SME"]}},
+      {"id": "cf_trade", "label": "Trade-finance related obligation", "factor": 0.05,
+       "when": {"facility_type": "TRADE_FINANCE"}},
+      {"id": "cf_guarantee", "label": "Guarantees and letters of credit", "factor": 0.05,
+       "when": {"facility_type": "GUARANTEE"}},
+      {"id": "cf_corp_credit", "label": "Credit facility — corporate, sovereign, PSE", "factor": 0.1,
+       "when": {"facility_type": "CREDIT", "counterparty_type": ["CORPORATE", "SOVEREIGN", "PSE"]}},
+      {"id": "cf_corp_liq", "label": "Liquidity facility — corporate, sovereign, PSE", "factor": 0.3,
+       "when": {"facility_type": "LIQUIDITY", "counterparty_type": ["CORPORATE", "SOVEREIGN", "PSE"]}},
+      {"id": "cf_bank", "label": "Credit or liquidity facility — bank", "factor": 0.4,
+       "when": {"counterparty_type": ["FI"], "facility_type": "CREDIT"}},
+      {"id": "cf_fi_liq", "label": "Liquidity facility — other financial institution", "factor": 1.0,
+       "when": {"counterparty_type": ["FI"], "facility_type": "LIQUIDITY"}}
+    ]
+  },
+
+  "inflows": {
+    "default_factor": 0.5,
+    "default_label": "Other contractual inflow",
+    "rules": [
+      {"id": "in_operational", "label": "Operational deposits placed at other banks", "factor": 0.0,
+       "when": {"operational": true},
+       "note": "excluded — mirrors the 25% outflow the holding bank books"},
+      {"id": "in_nostro", "label": "Nostro / vostro working balances", "factor": 0.0,
+       "when": {"product": ["NOSTRO"]}},
+      {"id": "in_revrepo_l1", "label": "Reverse repo secured by Level 1", "factor": 0.0,
+       "when": {"product": "REVERSE_REPO", "collateral_level": "L1"},
+       "note": "collateral already sits in the HQLA stock"},
+      {"id": "in_revrepo_l2a", "label": "Reverse repo secured by Level 2A", "factor": 0.15,
+       "when": {"product": "REVERSE_REPO", "collateral_level": "L2A"}},
+      {"id": "in_revrepo_l2b", "label": "Reverse repo secured by Level 2B", "factor": 0.5,
+       "when": {"product": "REVERSE_REPO", "collateral_level": "L2B"}},
+      {"id": "in_revrepo_other", "label": "Reverse repo — other collateral", "factor": 1.0,
+       "when": {"product": "REVERSE_REPO"}},
+      {"id": "in_fi", "label": "Performing loans / placements due from financial institutions", "factor": 1.0,
+       "when": {"counterparty_type": ["FI", "CENTRAL_BANK", "INTERNAL"]}},
+      {"id": "in_nonfi", "label": "Performing loans due from retail, SME and corporates", "factor": 0.5,
+       "when": {"counterparty_type": ["RETAIL", "SME", "CORPORATE", "SOVEREIGN", "PSE"]},
+       "note": "50% — the rest is assumed rolled over to keep the client"},
+      {"id": "in_securities", "label": "Non-HQLA securities maturing within the horizon", "factor": 1.0,
+       "when": {"product": "BOND"}}
+    ]
+  }
+}

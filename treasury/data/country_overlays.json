@@ -1,0 +1,83 @@
+{
+  "_note": "Desk-maintained jurisdiction notes shown when a country is clicked on the client map. This ships as a TEMPLATE: regulator names are filled in, everything else is for your team to write and keep current. Copy this file into your data folder to override it — the copy there wins, key by key. Nothing here is legal advice or a substitute for your compliance function.",
+  "_schema": {
+    "regulator": "supervisor for banking business in the jurisdiction",
+    "notes": "free-text bullets shown under Regulation",
+    "rules": "label/value pairs — the things a dealer needs before quoting",
+    "quota": "limit the desk manages itself: {label, limit, currency, used_from}",
+    "review": "when the team last checked these notes"
+  },
+  "HK": {
+    "regulator": "HKMA",
+    "notes": ["Fill in: licensing scope, deposit-taking restrictions, any conditions on the desk's activity."],
+    "rules": [
+      {"label": "Currency regime", "value": "HKD linked to USD (Convertibility Undertaking band)"},
+      {"label": "Deposit protection", "value": "Deposit Protection Scheme — confirm the current coverage limit"},
+      {"label": "Settlement", "value": "CHATS — check the cut-off your correspondent applies"}
+    ],
+    "quota": {"label": "Country exposure limit", "limit": null, "currency": "USD"},
+    "review": ""
+  },
+  "CN": {
+    "regulator": "NFRA / PBoC / SAFE",
+    "notes": ["Fill in: cross-border flow approvals your entity relies on, and who signs them off."],
+    "rules": [
+      {"label": "Currency", "value": "CNY onshore is not freely convertible; CNH is the offshore deliverable"},
+      {"label": "Cross-border", "value": "Macro-prudential parameters govern cross-border financing — confirm the current setting before quoting"}
+    ],
+    "quota": {"label": "Cross-border financing quota", "limit": null, "currency": "CNY"},
+    "review": ""
+  },
+  "SG": {
+    "regulator": "MAS",
+    "notes": ["Fill in: licence conditions and any restrictions on SGD lending to non-residents."],
+    "rules": [{"label": "Settlement", "value": "MEPS+ — check cut-offs"}],
+    "quota": {"label": "Country exposure limit", "limit": null, "currency": "USD"},
+    "review": ""
+  },
+  "CH": {
+    "regulator": "FINMA",
+    "notes": ["Fill in: Swiss liquidity ordinance specifics your entity is held to."],
+    "rules": [
+      {"label": "Deposit protection", "value": "esisuisse — confirm the current per-client limit"},
+      {"label": "Settlement", "value": "SIC — check cut-offs"}
+    ],
+    "quota": {"label": "Country exposure limit", "limit": null, "currency": "CHF"},
+    "review": ""
+  },
+  "GB": {
+    "regulator": "PRA / FCA",
+    "notes": ["Fill in: branch vs subsidiary treatment and any local liquidity requirement."],
+    "rules": [{"label": "Settlement", "value": "CHAPS — check cut-offs"}],
+    "quota": {"label": "Country exposure limit", "limit": null, "currency": "GBP"},
+    "review": ""
+  },
+  "US": {
+    "regulator": "OCC / Federal Reserve / FDIC",
+    "notes": ["Fill in: which US touchpoints the desk has and the rules that follow from them."],
+    "rules": [{"label": "Settlement", "value": "Fedwire / CHIPS — check cut-offs"}],
+    "quota": {"label": "Country exposure limit", "limit": null, "currency": "USD"},
+    "review": ""
+  },
+  "DE": {
+    "regulator": "BaFin / ECB (SSM)",
+    "notes": ["Fill in."],
+    "rules": [{"label": "Settlement", "value": "TARGET2 / T2 — check cut-offs"}],
+    "quota": {"label": "Country exposure limit", "limit": null, "currency": "EUR"},
+    "review": ""
+  },
+  "AE": {
+    "regulator": "CBUAE (DFSA in the DIFC)",
+    "notes": ["Fill in: whether the counterparty sits onshore or in the DIFC — the rulebook differs."],
+    "rules": [{"label": "Currency regime", "value": "AED pegged to USD"}],
+    "quota": {"label": "Country exposure limit", "limit": null, "currency": "USD"},
+    "review": ""
+  },
+  "JP": {
+    "regulator": "FSA / Bank of Japan",
+    "notes": ["Fill in."],
+    "rules": [{"label": "Settlement", "value": "BOJ-NET / Zengin — check cut-offs"}],
+    "quota": {"label": "Country exposure limit", "limit": null, "currency": "JPY"},
+    "review": ""
+  }
+}

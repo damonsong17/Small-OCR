@@ -26,12 +26,18 @@ OUT = ROOT / "Small-OCR_offline.zip"
 
 # Directory names / suffixes never copied to the offline machine.
 EXCLUDE_DIRS = {".venv", ".venv_test", "venv", ".git", "__pycache__",
-                ".idea", ".vscode", "data", "output"}
+                ".idea", ".vscode"}
+# Only at the repo root: the desk's own data and outputs. Matching these
+# anywhere would drop treasury/data/, which carries the map and the
+# jurisdiction files the dashboard needs offline.
+EXCLUDE_TOP = {"data", "output"}
 EXCLUDE_SUFFIX = {".pyc", ".db", ".zip"}
 
 
 def _skip(rel: Path) -> bool:
     if any(part in EXCLUDE_DIRS for part in rel.parts):
+        return True
+    if rel.parts and rel.parts[0] in EXCLUDE_TOP:
         return True
     if rel.suffix in EXCLUDE_SUFFIX:
         return True

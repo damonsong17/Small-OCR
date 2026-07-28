@@ -1,4 +1,26 @@
-# Small-OCR — Quote Sheet OCR Pipeline
+# Small-OCR — Treasury Desk Toolkit
+
+Two things, both built to run **fully offline on a modest Windows box**:
+
+1. **Quote-sheet OCR** — turn broker quote images and PDFs into structured
+   bid/offer rows, and from there into a funding curve, CIP pricing and
+   cross-currency arbitrage scans.
+2. **[Treasury dashboard](TREASURY_DASHBOARD.md)** — point it at a folder of
+   Excel files and monitor cash projection, client balances, FX risk, LCR,
+   NSFR and P&L, plus a client map with per-jurisdiction regulation, quota and
+   live bid/offer. Metrics are computed from source deal data, not re-keyed
+   from finished reports, and the panel set is extensible.
+
+```powershell
+python scripts\make_demo_data.py --out data\treasury   # a demo bank
+python dashboard.py --data data\treasury --open        # the dashboard
+```
+
+The rest of this file covers the OCR pipeline.
+
+---
+
+## Quote-sheet OCR
 
 Turn **quote-sheet images (JPG/PNG/…) and PDFs** into **structured bid/offer
 rows** (CSV or JSON). Built on **PP-OCRv5** (via [RapidOCR](https://github.com/RapidAI/RapidOCR),
@@ -112,6 +134,16 @@ for q in quotes:
 
 See **[DEPLOYMENT.md](DEPLOYMENT.md)** for Windows/VS Code setup, Intel OpenVINO
 acceleration, tuning, and how to extend the field extraction.
+
+## Feeding the dashboard
+
+`quotes.db` is also the dashboard's live rate source — the money-market curve on
+the client map is the broker quotes you scanned that morning:
+
+```powershell
+python ingest.py data\inbox --out data\output
+python dashboard.py --data data\treasury --quotes-db data\output\quotes.db --open
+```
 
 ## Try it offline
 

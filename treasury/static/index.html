@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en" data-theme="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Treasury dashboard</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="icon" href="data:,">
+</head>
+<body>
+<div id="app" class="shell">
+
+  <aside class="sidebar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <span>
+        <strong id="entity">Treasury</strong>
+        <small id="asof">loading…</small>
+      </span>
+    </div>
+    <nav id="nav" aria-label="Metrics"></nav>
+    <div class="sidebar-foot">
+      <div id="counts" class="counts"></div>
+      <p class="offline">Runs offline · no network calls</p>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <div class="titles">
+        <h1 id="panel-title">Overview</h1>
+        <p id="panel-subtitle" class="subtitle"></p>
+      </div>
+      <div class="controls" id="controls">
+        <label class="control" id="currency-control" hidden>
+          <span>Currency</span>
+          <select id="currency-select"></select>
+        </label>
+        <button type="button" id="reload" class="btn">Reload data</button>
+        <button type="button" id="snapshot" class="btn" title="Store today's headline
+numbers so the ratios get a trend line">Snapshot</button>
+        <button type="button" id="theme" class="btn btn-icon" aria-label="Switch theme">
+          <span id="theme-label">Auto</span>
+        </button>
+      </div>
+    </header>
+
+    <div id="warnings" class="warnings" hidden></div>
+    <section id="content" class="content" aria-live="polite"></section>
+  </main>
+
+  <div id="drawer" class="drawer" hidden aria-hidden="true" role="dialog"
+       aria-labelledby="drawer-title">
+    <div class="drawer-head">
+      <div>
+        <h2 id="drawer-title">Jurisdiction</h2>
+        <p id="drawer-sub" class="subtitle"></p>
+      </div>
+      <button type="button" id="drawer-close" class="btn btn-icon"
+              aria-label="Close">✕</button>
+    </div>
+    <div id="drawer-body" class="drawer-body"></div>
+  </div>
+  <div id="scrim" class="scrim" hidden></div>
+
+  <div id="tooltip" class="tooltip" role="status" aria-live="polite" hidden></div>
+</div>
+<script src="app.js"></script>
+</body>
+</html>

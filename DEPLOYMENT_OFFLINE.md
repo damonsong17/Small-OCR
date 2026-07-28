@@ -113,6 +113,26 @@ This is the skeleton for the arb/quoting engine. The exact bid/offer side to use
 (borrow vs lend) and the points/outright convention are marked `TODO` in
 `pricing.py`/`bloomberg.py` — they set the numbers, not the structure.
 
+## 5b. Treasury dashboard on the same box
+
+The dashboard adds **no dependencies** beyond `openpyxl`, which is already in
+`requirements.txt` and therefore already in the bundle. Once the install above
+succeeds, it just runs:
+
+```powershell
+python dashboard.py --data D:\treasury\data --check     # what it understood
+python dashboard.py --data D:\treasury\data --open      # serve on localhost:8787
+```
+
+The world map, the client geocoding files and the regulatory factor tables ship
+inside `treasury\` — nothing is fetched at runtime. Pull the network cable and
+reload the page to confirm.
+
+To let the rest of the desk reach it, `--host 0.0.0.0`. There is no
+authentication, so only on a trusted internal network.
+
+See [TREASURY_DASHBOARD.md](TREASURY_DASHBOARD.md).
+
 ## 6. Troubleshooting
 
 | Symptom | Fix |
