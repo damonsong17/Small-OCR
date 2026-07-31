@@ -57,6 +57,12 @@ def main(argv=None):
     with client as c:
         fx = {pr: build_fx_market(c, pr, tenors) for pr in pairs}
 
+    # 2b) show the raw Bloomberg bid/ask actually captured (ticker verification)
+    for pr, m in fx.items():
+        for t, fp in m.items():
+            print(f"[FX] {pr} {t}: spot {fp.spot_bid}/{fp.spot_ask}  "
+                  f"fwd {fp.fwd_bid}/{fp.fwd_ask}  pts {fp.points}")
+
     # 3) scan the channel surface for cross-currency arbitrage
     opps = arb.scan_surface_noarb(surface, fx, pairs, tenors,
                                   channel=args.channel, threshold_bps=args.threshold)
