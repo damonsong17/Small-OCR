@@ -33,15 +33,23 @@ def main(argv=None):
     p.add_argument("--db", default=None, help="quotes.db with channel funding rates.")
     p.add_argument("--date", default=None, help="Quote date, e.g. 2026-07-16.")
     p.add_argument("--channel", default="AFS", help="Channel/source name (pilot: AFS).")
-    p.add_argument("--pairs", default="USDCNH,EURUSD", help="FX pairs to check.")
+    p.add_argument("--pairs", default="", help="FX pairs to check (explicit).")
+    p.add_argument("--ccy", default="USD,CNH,CHF,EUR,HKD",
+                   help="Currencies; all pair combinations are checked "
+                        "(ignored if --pairs is given).")
     p.add_argument("--tenors", default="1M,3M,6M,1Y", help="Tenors to check.")
     p.add_argument("--threshold", type=float, default=0.5, help="Min bps to flag.")
     p.add_argument("--live", action="store_true", help="Use the Bloomberg terminal.")
     args = p.parse_args(argv)
 
-    pairs = [x.strip() for x in args.pairs.split(",")]
     tenors = [x.strip() for x in args.tenors.split(",")]
+    if args.pairs.strip():
+        pairs = [x.strip() for x in args.pairs.split(",") if x.strip()]
+    else:
+        from quote_ocr.bloomberg import all_pairs
+        pairs = all_pairs([c.strip().upper() for c in args.ccy.split(",") if c.strip()])
     currencies = sorted({c for pr in pairs for c in (pr[:3], pr[3:])})
+    print(f"pairs: {', '.join(pairs)}")
 
     # 1) channel funding surface (from OCR store, or demo)
     if args.db and args.date:

@@ -43,6 +43,20 @@ TENOR_CODE = {
 }
 
 
+def _element_value(field_data, name):
+    """Read a field without assuming its type (float / string / date)."""
+    if field_data is None or not field_data.hasElement(name):
+        return None
+    el = field_data.getElement(name)
+    try:
+        return el.getValue()          # native Python type
+    except Exception:
+        try:
+            return el.toString().strip()
+        except Exception:
+            return None
+
+
 class BloombergClient:
     """Thin wrapper over blpapi ReferenceDataRequest (Desktop API)."""
 
@@ -66,7 +80,13 @@ class BloombergClient:
             raise ConnectionError("Could not open //blp/refdata service.")
         return self
 
-    def reference(self, securities: List[str], fields: List[str]) -> Dict[str, Dict[str, float]]:
+    def reference(self, securities: List[str], fields: List[str]) -> Dict[str, Dict]:
+        """Snapshot reference data. Values keep their native type (float/str/date).
+
+        Any per-security problem is reported back under the '__error__' key and
+        unavailable fields under '__fieldErrors__', so a None is explainable
+        (bad ticker vs no permission vs field not applicable) instead of silent.
+        """
         import blpapi
 
         svc = self._session.getService("//blp/refdata")
@@ -77,7 +97,7 @@ class BloombergClient:
             req.getElement("fields").appendValue(f)
         self._session.sendRequest(req)
 
-        out: Dict[str, Dict[str, float]] = {}
+        out: Dict[str, Dict] = {}
         while True:
             ev = self._session.nextEvent(5000)
             for msg in ev:
@@ -87,11 +107,19 @@ class BloombergClient:
                 for i in range(arr.numValues()):
                     sd = arr.getValueAsElement(i)
                     sec = sd.getElementAsString("security")
-                    fd = sd.getElement("fieldData")
-                    out[sec] = {
-                        f: (fd.getElementAsFloat(f) if fd.hasElement(f) else None)
-                        for f in fields
-                    }
+                    rec: Dict = {}
+                    if sd.hasElement("securityError"):
+                        rec["__error__"] = sd.getElement("securityError").toString().strip()
+                    if sd.hasElement("fieldExceptions"):
+                        fe = sd.getElement("fieldExceptions")
+                        errs = [fe.getValueAsElement(k).toString().strip()
+                                for k in range(fe.numValues())]
+                        if errs:
+                            rec["__fieldErrors__"] = errs
+                    fd = sd.getElement("fieldData") if sd.hasElement("fieldData") else None
+                    for f in fields:
+                        rec[f] = _element_value(fd, f)
+                    out[sec] = rec
             if ev.eventType() == blpapi.Event.RESPONSE:
                 break
         return out
@@ -141,10 +169,42 @@ class FxPoint:
     fwd_ask: Optional[float] = None   # forward outright ask
 
 
+# Market quoting convention: the currency earlier in this list is the BASE.
+# (EUR/USD, USD/CHF, USD/CNH, ... ) Extend as new currencies are added.
+QUOTE_ORDER = ["EUR", "GBP", "AUD", "NZD", "USD", "CAD", "CHF", "CNH", "CNY",
+               "HKD", "SGD", "JPY"]
+
+
+def order_pair(a: str, b: str) -> str:
+    """Return the market-convention pair string for two currencies."""
+    def rank(c):
+        return QUOTE_ORDER.index(c) if c in QUOTE_ORDER else len(QUOTE_ORDER)
+    return (a + b) if rank(a) <= rank(b) else (b + a)
+
+
+def all_pairs(currencies: List[str]) -> List[str]:
+    """Every unique pair from a currency list, in market-convention order."""
+    cs = list(dict.fromkeys(currencies))
+    out = []
+    for i, a in enumerate(cs):
+        for b in cs[i + 1:]:
+            out.append(order_pair(a, b))
+    return out
+
+
 def _fwd_key(pair: str) -> str:
-    """Bloomberg keys FX forward tickers off the non-USD leg (CNH, EUR, ...)."""
+    """Root used for FX forward tickers.
+
+    For USD pairs Bloomberg keys forwards off the non-USD leg (CNH+1M, EUR+1M).
+    For crosses (no USD leg) the full pair is used (EURCHF+1M) -- VERIFY on the
+    terminal; if a cross returns no data, that is the ticker root to adjust.
+    """
     base, quote = pair[:3], pair[3:]
-    return quote if base == "USD" else base
+    if base == "USD":
+        return quote
+    if quote == "USD":
+        return base
+    return pair
 
 
 def build_fx_market(client, pair: str, tenors: List[str], pip: float = 10000.0) -> Dict[str, FxPoint]:
