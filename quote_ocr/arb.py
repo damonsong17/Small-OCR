@@ -18,6 +18,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 
+from .implied import basis_of
 from .pricing import TENOR_DAYS
 
 # Currencies whose term funding carries offshore-liquidity risk.
@@ -43,18 +44,22 @@ class Opportunity:
 
 
 # --- CIP helpers (QUOTE per BASE, e.g. USDCNH = CNH per USD) -------------------
+# Each leg accrues on its OWN day-count basis, and `act` is the ACTUAL number of
+# days between the spot and forward settlement dates (from Bloomberg SETTLE_DT).
 def fwd_over_spot(spot: float, points: float, pip: float = 10000.0) -> float:
     return (spot + points / pip) / spot
 
 
-def implied_quote_rate(fos: float, r_base: float, t: float) -> float:
+def implied_quote_rate(fos: float, r_base: float, act: int,
+                       basis_base: int = 360, basis_quote: int = 360) -> float:
     """Synthetic QUOTE-ccy rate from borrowing BASE and FX-swapping it."""
-    return (fos * (1.0 + r_base * t) - 1.0) / t
+    return (fos * (1.0 + r_base * act / basis_base) - 1.0) * basis_quote / act
 
 
-def implied_base_rate(fos: float, r_quote: float, t: float) -> float:
+def implied_base_rate(fos: float, r_quote: float, act: int,
+                      basis_base: int = 360, basis_quote: int = 360) -> float:
     """Synthetic BASE-ccy rate from borrowing QUOTE and FX-swapping it."""
-    return ((1.0 + r_quote * t) / fos - 1.0) / t
+    return ((1.0 + r_quote * act / basis_quote) / fos - 1.0) * basis_base / act
 
 
 def classify_risk(pair: str, tenor: str) -> str:
@@ -83,12 +88,16 @@ def scan_surface_noarb(
     opps: List[Opportunity] = []
     for pair in pairs:
         base, quote = pair[:3], pair[3:]
+        bb, bq = basis_of(base), basis_of(quote)
         for tenor in tenors:
             fp = fx.get(pair, {}).get(tenor)
-            days = TENOR_DAYS.get(tenor)
-            if fp is None or fp.spot is None or fp.points is None or days is None:
+            if fp is None or fp.spot is None or fp.points is None:
                 continue
-            t = days / basis
+            # ACTUAL settle-to-settle days; fall back to the nominal table only
+            # if SETTLE_DT was unavailable.
+            act = getattr(fp, "act", None) or TENOR_DAYS.get(tenor)
+            if not act:
+                continue
             fos = fwd_over_spot(fp.spot, fp.points, pip)
 
             b_off = _g(surface, base, "offer", tenor)
@@ -98,23 +107,23 @@ def scan_surface_noarb(
 
             # borrow BASE @offer -> synth QUOTE borrow; lend QUOTE @bid
             if b_off is not None and q_bid is not None:
-                synth = implied_quote_rate(fos, b_off, t)
+                synth = implied_quote_rate(fos, b_off, act, bb, bq)
                 edge = (q_bid - synth) * 1e4
                 if edge > threshold_bps:
                     opps.append(Opportunity(
                         kind, pair, tenor, round(edge, 2), classify_risk(pair, tenor), channel,
                         f"borrow {base}@{b_off*100:.3f} -> FX swap -> lend {quote}@{q_bid*100:.3f} "
-                        f"(synth {quote} borrow {synth*100:.3f})"))
+                        f"(synth {quote} borrow {synth*100:.3f}, act={act})"))
 
             # borrow QUOTE @offer -> synth BASE borrow; lend BASE @bid
             if q_off is not None and b_bid is not None:
-                synth = implied_base_rate(fos, q_off, t)
+                synth = implied_base_rate(fos, q_off, act, bb, bq)
                 edge = (b_bid - synth) * 1e4
                 if edge > threshold_bps:
                     opps.append(Opportunity(
                         kind, pair, tenor, round(edge, 2), classify_risk(pair, tenor), channel,
                         f"borrow {quote}@{q_off*100:.3f} -> FX swap -> lend {base}@{b_bid*100:.3f} "
-                        f"(synth {base} borrow {synth*100:.3f})"))
+                        f"(synth {base} borrow {synth*100:.3f}, act={act})"))
     return opps
 
 

@@ -14,7 +14,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 
-# Approximate day counts per tenor (ACT/360 money-market convention).
+# FALLBACK ONLY -- nominal day counts, used when Bloomberg SETTLE_DT is not
+# available. The real `act` is the ACTUAL number of days between the spot and
+# forward settlement dates; it changes with the trade date (weekend/holiday
+# rolls) and is generally NOT 30/60/90. Example: trade 2026-08-04 -> spot
+# 2026-08-06, 1M forward settles 2026-09-08 => act = 33, not 30 (a 10% error).
+# Week tenors are the stable ones; month tenors always need SETTLE_DT.
 TENOR_DAYS = {
     "O/N": 1, "T/N": 1, "1W": 7, "2W": 14, "3W": 21,
     "1M": 30, "2M": 60, "3M": 91, "4M": 121, "6M": 182, "9M": 273, "1Y": 365,

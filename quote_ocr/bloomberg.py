@@ -167,6 +167,12 @@ class FxPoint:
     spot_ask: Optional[float] = None
     fwd_bid: Optional[float] = None   # forward outright bid
     fwd_ask: Optional[float] = None   # forward outright ask
+    # Settlement dates and the ACTUAL day count between them. `act` varies by
+    # tenor AND by trade date (holiday/weekend rolls), so it must come from
+    # Bloomberg's SETTLE_DT -- never a nominal 30/90/180.
+    spot_settle: Optional[object] = None
+    fwd_settle: Optional[object] = None
+    act: Optional[int] = None
 
 
 # Market quoting convention: the currency earlier in this list is the BASE.
@@ -207,9 +213,13 @@ def _fwd_key(pair: str) -> str:
     return pair
 
 
-def build_fx_market(client, pair: str, tenors: List[str], pip: float = 10000.0) -> Dict[str, FxPoint]:
-    """Pull spot + forward outright (bid/ask) and derive points, per tenor."""
-    fields = FX_TICKERS["fields"]
+def build_fx_market(client, pair: str, tenors: List[str], pip: float = 10000.0,
+                    with_settle: bool = True) -> Dict[str, FxPoint]:
+    """Pull spot + forward outright (bid/ask), derive points, and (by default)
+    the SETTLE_DT of each leg so the ACTUAL day count `act` is available."""
+    fields = list(FX_TICKERS["fields"])
+    if with_settle:
+        fields.append("SETTLE_DT")
     spot_sec = FX_TICKERS["spot"].format(pair=pair)
     fwd = _fwd_key(pair)
     secs = [spot_sec]
@@ -224,6 +234,7 @@ def build_fx_market(client, pair: str, tenors: List[str], pip: float = 10000.0) 
     sd = ref.get(spot_sec) or {}
     s_bid, s_ask = sd.get("PX_BID"), sd.get("PX_ASK")
     spot = _mid(s_bid, s_ask)
+    spot_settle = sd.get("SETTLE_DT") if with_settle else None
 
     out = {}
     for t, sec in per_tenor.items():
@@ -231,8 +242,11 @@ def build_fx_market(client, pair: str, tenors: List[str], pip: float = 10000.0) 
         f_bid, f_ask = fd.get("PX_BID"), fd.get("PX_ASK")
         fwd_mid = _mid(f_bid, f_ask)
         points = (fwd_mid - spot) * pip if (fwd_mid is not None and spot is not None) else None
+        fwd_settle = fd.get("SETTLE_DT") if with_settle else None
         out[t] = FxPoint(tenor=t, spot=spot, points=points,
-                         spot_bid=s_bid, spot_ask=s_ask, fwd_bid=f_bid, fwd_ask=f_ask)
+                         spot_bid=s_bid, spot_ask=s_ask, fwd_bid=f_bid, fwd_ask=f_ask,
+                         spot_settle=spot_settle, fwd_settle=fwd_settle,
+                         act=act_days(spot_settle, fwd_settle))
     return out
 
 
@@ -265,8 +279,11 @@ def act_days(spot_settle, fwd_settle) -> Optional[int]:
     return (fwd_settle - spot_settle).days
 
 
-def _quote(bid, ask):
-    return {"PX_BID": bid, "PX_ASK": ask}
+def _quote(bid, ask, settle=None):
+    d = {"PX_BID": bid, "PX_ASK": ask}
+    if settle is not None:
+        d["SETTLE_DT"] = settle
+    return d
 
 
 def demo_mock_fx() -> MockBloomberg:
@@ -275,17 +292,23 @@ def demo_mock_fx() -> MockBloomberg:
     Uses the Help-Desk ticker convention: spot '<PAIR> Curncy', outrights
     '<non-USD leg>+<tenor> Curncy' (e.g. CNH+1M, EUR+3M), fields PX_BID/PX_ASK.
     """
+    from datetime import date
+    # Trade date 2026-08-04 -> spot 2026-08-06; forward settles roll with the
+    # calendar, so act is 33/95/186/368 -- not 30/90/180/360.
+    sp = date(2026, 8, 6)
+    s1, s3, s6, s12 = (date(2026, 9, 8), date(2026, 11, 9),
+                       date(2027, 2, 8), date(2027, 8, 9))
     return MockBloomberg(data={
         # USDCNH: forward discount (USD rate > CNH rate) -> outright < spot
-        "USDCNH Curncy": _quote(7.1840, 7.1860),
-        "CNH+1M Curncy": _quote(7.1725, 7.1735),
-        "CNH+3M Curncy": _quote(7.1495, 7.1505),
-        "CNH+6M Curncy": _quote(7.1155, 7.1165),
-        "CNH+12M Curncy": _quote(7.0520, 7.0540),
+        "USDCNH Curncy": _quote(7.1840, 7.1860, sp),
+        "CNH+1M Curncy": _quote(7.1725, 7.1735, s1),
+        "CNH+3M Curncy": _quote(7.1495, 7.1505, s3),
+        "CNH+6M Curncy": _quote(7.1155, 7.1165, s6),
+        "CNH+12M Curncy": _quote(7.0520, 7.0540, s12),
         # EURUSD: forward premium (USD rate > EUR rate) -> outright > spot
-        "EURUSD Curncy": _quote(1.08495, 1.08505),
-        "EUR+1M Curncy": _quote(1.08585, 1.08595),
-        "EUR+3M Curncy": _quote(1.08755, 1.08765),
-        "EUR+6M Curncy": _quote(1.08995, 1.09005),
-        "EUR+12M Curncy": _quote(1.09445, 1.09455),
+        "EURUSD Curncy": _quote(1.08495, 1.08505, sp),
+        "EUR+1M Curncy": _quote(1.08585, 1.08595, s1),
+        "EUR+3M Curncy": _quote(1.08755, 1.08765, s3),
+        "EUR+6M Curncy": _quote(1.08995, 1.09005, s6),
+        "EUR+12M Curncy": _quote(1.09445, 1.09455, s12),
     })

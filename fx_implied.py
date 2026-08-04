@@ -40,23 +40,27 @@ def main(argv=None):
 
     client = BloombergClient() if args.live else demo_mock_fx()
     with client as c:
+        # SETTLE_DT comes back on each FxPoint, so `act` is the real
+        # settle-to-settle day count for today's trade date.
         fx = build_fx_market(c, pair, tenors)
-        sd = {} if args.act else settle_dates(c, pair, tenors)
 
+    any_fp = next(iter(fx.values()), None)
+    spot_settle = any_fp.spot_settle if any_fp else None
     print(f"{pair}: implying {base} (ACT/{basis_of(base)}) from "
           f"{quote} {args.rate:.4f}% (ACT/{basis_of(quote)})")
-    print(f"  spot settle: {sd.get('spot', 'n/a')}\n")
-    print(f"  {'tenor':6} {'act':>4} {'settle':>12} {'implied_bid':>12} {'implied_ask':>12}")
+    print(f"  spot settle: {spot_settle or 'n/a'}\n")
+    print(f"  {'tenor':6} {'act':>4} {'fwd settle':>12} {'implied_bid':>12} {'implied_ask':>12}")
     for t in tenors:
         fp = fx.get(t)
-        act = args.act or act_days(sd.get("spot"), sd.get(t))
+        act = args.act or (fp.act if fp else None)
         if fp is None or act is None or None in (fp.spot_bid, fp.spot_ask,
                                                  fp.fwd_bid, fp.fwd_ask):
-            print(f"  {t:6} {'-':>4} {str(sd.get(t, '-')):>12}  (missing data)")
+            got = fp.fwd_settle if fp else None
+            print(f"  {t:6} {'-':>4} {str(got or '-'):>12}  (missing data)")
             continue
         r = implied_base_yield(pair, t, act, fp.spot_bid, fp.spot_ask,
                                fp.fwd_bid, fp.fwd_ask, r_quote)
-        print(f"  {t:6} {act:>4} {str(sd.get(t, '-')):>12} "
+        print(f"  {t:6} {act:>4} {str(fp.fwd_settle or '-'):>12} "
               f"{r.bid*100:>11.6f}% {r.ask*100:>11.6f}%")
 
 
