@@ -1,0 +1,190 @@
+#!/usr/bin/env python3
+"""Desk run: scan every currency pair for arbitrage AND publish an FTP surface.
+
+Run this before a trade so the market leg uses the latest Bloomberg data.
+
+    # offline (mock FX) -- develop/verify
+    python run_desk.py --db data/output/quotes.db --date 2026-07-16
+
+    # live terminal
+    python run_desk.py --db data/output/quotes.db --date 2026-07-16 --live
+
+    # extra channels from text files (future sources)
+    python run_desk.py --txt hq_funding.txt --txt broker2.txt --live
+
+Untradeable AFS blocks (Korean / Taiwanese / Indian / ISLAMIC) are excluded
+automatically -- we cannot obtain those prices, so they must never drive
+pricing or signals.
+"""
+from __future__ import annotations
+
+import argparse
+import csv
+
+from quote_ocr import arb, ftp as ftp_mod, sources
+from quote_ocr.bloomberg import (
+    BloombergClient,
+    all_pairs,
+    build_fx_market,
+    demo_mock_fx,
+    triangulate,
+)
+
+
+def main(argv=None):
+    p = argparse.ArgumentParser(description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--db", default=None, help="quotes.db (OCR channel).")
+    p.add_argument("--date", default=None, help="Quote date, e.g. 2026-07-16.")
+    p.add_argument("--txt", action="append", default=[],
+                   help="Extra quote file (.txt/.csv); repeatable.")
+    p.add_argument("--ccy", default="USD,CNH,CHF,EUR,HKD", help="Currencies.")
+    p.add_argument("--tenors", default="1M,3M,6M,1Y", help="Tenors.")
+    p.add_argument("--threshold", type=float, default=0.5, help="Min bps to flag.")
+    p.add_argument("--margin-bps", type=float, default=5.0, help="FTP margin (bps).")
+    p.add_argument("--mode", default="bid", choices=["bid", "offer"],
+                   help="Which side to tighten when enforcing FTP no-arb.")
+    p.add_argument("--include-untradeable", action="store_true",
+                   help="Do NOT exclude Korean/Taiwanese/Indian/ISLAMIC blocks.")
+    p.add_argument("--out", default=None, help="Write FTP surface to this CSV.")
+    p.add_argument("--live", action="store_true", help="Use the Bloomberg terminal.")
+    args = p.parse_args(argv)
+
+    ccys = [c.strip().upper() for c in args.ccy.split(",") if c.strip()]
+    tenors = [t.strip() for t in args.tenors.split(",") if t.strip()]
+    pairs = all_pairs(ccys)
+    excl = set() if args.include_untradeable else None
+
+    # ---- 1. channel surfaces -------------------------------------------------
+    surfaces = []
+    if args.db and args.date:
+        from quote_ocr.store import QuoteStore
+        with QuoteStore(args.db) as store:
+            surfaces.append(sources.surface_from_store(store, args.date, ccys, excl))
+    for path in args.txt:
+        surfaces.append(sources.surface_from_text(path, excl))
+    if not surfaces:
+        print("(no --db/--txt given; using demo funding surface)")
+        surfaces.append(_demo_surface())
+    surface = sources.merge_surfaces(*surfaces)
+
+    print(f"currencies: {', '.join(ccys)}")
+    print(f"pairs ({len(pairs)}): {', '.join(pairs)}")
+    print(f"tenors: {', '.join(tenors)}\n")
+
+    # ---- 2. FX market --------------------------------------------------------
+    client = BloombergClient() if args.live else demo_mock_fx()
+    with client as c:
+        fx = {pr: build_fx_market(c, pr, tenors) for pr in pairs}
+    n = triangulate(fx, pairs, tenors)   # fill crosses from their USD legs
+    if n:
+        print(f"triangulated {n} cross pair-tenor(s) from USD legs")
+    _fx_coverage(fx, pairs, tenors)
+
+    # ---- 3. arbitrage across every pair -------------------------------------
+    opps = arb.scan_surface_noarb(surface, fx, pairs, tenors,
+                                  channel="CHANNELS", threshold_bps=args.threshold)
+    _print_opps(opps)
+
+    # ---- 4. FTP surface, made arbitrage free --------------------------------
+    ftp_surface, adjustments = ftp_mod.build_ftp(
+        surface, fx, pairs, tenors, margin_bps=args.margin_bps, mode=args.mode)
+    _print_ftp(ftp_surface, tenors, adjustments)
+
+    # ---- 5. verify the published FTP cannot be arbitraged --------------------
+    residual = arb.scan_surface_noarb(ftp_surface, fx, pairs, tenors,
+                                      channel="OUR_FTP", kind="ftp_self_arb",
+                                      threshold_bps=0.01)
+    if residual:
+        print(f"\n!! FTP STILL ARBITRAGEABLE: {len(residual)} route(s) -- do not publish")
+        for o in residual[:5]:
+            print("   ", o.as_row()["detail"])
+    else:
+        print("\nFTP check: no cross-currency arbitrage remaining -> safe to publish")
+
+    if args.out:
+        _write_csv(ftp_surface, tenors, args.out)
+        print(f"wrote {args.out}")
+
+
+def _fx_coverage(fx, pairs, tenors):
+    missing = [f"{pr} {t}" for pr in pairs for t in tenors
+               if (fx.get(pr, {}).get(t) is None
+                   or fx[pr][t].spot is None or fx[pr][t].points is None)]
+    have = len(pairs) * len(tenors) - len(missing)
+    print(f"FX coverage: {have}/{len(pairs)*len(tenors)} pair-tenors")
+    if missing:
+        print(f"  missing: {', '.join(missing[:12])}"
+              f"{' ...' if len(missing) > 12 else ''}")
+    print()
+
+
+def _print_opps(opps):
+    print(f"=== ARBITRAGE: {len(opps)} opportunity(ies) ===")
+    if not opps:
+        print("  none above threshold.\n")
+        return
+    cols = [("pair", 8), ("tenor", 6), ("pnl_bps", 9), ("risk_type", 34), ("detail", 72)]
+    print("  ".join(h.ljust(w) for h, w in cols))
+    print("-" * 132)
+    for o in sorted(opps, key=lambda x: -x.pnl_bps):
+        d = o.as_row()
+        print("  ".join(str(d[h])[:w].ljust(w) for h, w in cols))
+    print()
+
+
+def _print_ftp(ftp_surface, tenors, adjustments):
+    print("=== FTP SURFACE (%, arbitrage-free) ===")
+    hdr = "  ccy   " + "".join(f"{t:>18}" for t in tenors)
+    print(hdr)
+    print("-" * len(hdr))
+    for ccy in sorted(ftp_surface):
+        cells = []
+        for t in tenors:
+            b = ftp_surface[ccy]["bid"].get(t)
+            o = ftp_surface[ccy]["offer"].get(t)
+            cells.append(f"{_p(b)}/{_p(o)}".rjust(18))
+        print(f"  {ccy:5} " + "".join(cells))
+    if adjustments:
+        print(f"\n  {len(adjustments)} no-arb adjustment(s) applied:")
+        for a in adjustments[:10]:
+            r = a.as_row()
+            print(f"    {r['ccy']} {r['tenor']} {r['side']}: "
+                  f"{r['before_pct']:.4f} -> {r['after_pct']:.4f} "
+                  f"({r['moved_bps']:+.1f} bps)  [{r['reason']}]")
+        if len(adjustments) > 10:
+            print(f"    ... {len(adjustments)-10} more")
+
+
+def _p(v):
+    return "-" if v is None else f"{v*100:.4f}"
+
+
+def _write_csv(ftp_surface, tenors, path):
+    with open(path, "w", newline="", encoding="utf-8-sig") as f:
+        w = csv.writer(f)
+        w.writerow(["currency", "tenor", "ftp_bid_pct", "ftp_offer_pct"])
+        for ccy in sorted(ftp_surface):
+            for t in tenors:
+                b = ftp_surface[ccy]["bid"].get(t)
+                o = ftp_surface[ccy]["offer"].get(t)
+                if b is None and o is None:
+                    continue
+                w.writerow([ccy, t,
+                            "" if b is None else round(b * 100, 6),
+                            "" if o is None else round(o * 100, 6)])
+
+
+def _demo_surface():
+    return {
+        "USD": {"bid": {"1M": 0.0380, "3M": 0.0400, "6M": 0.0411, "1Y": 0.0422},
+                "offer": {"1M": 0.0385, "3M": 0.0405, "6M": 0.0418, "1Y": 0.0445}},
+        "EUR": {"bid": {"1M": 0.0230, "3M": 0.0240, "6M": 0.0250, "1Y": 0.0270},
+                "offer": {"1M": 0.0250, "3M": 0.0260, "6M": 0.0275, "1Y": 0.0285}},
+        "CNH": {"bid": {"1M": 0.0125, "3M": 0.0135, "6M": 0.0140, "1Y": 0.0130},
+                "offer": {"1M": 0.0155, "3M": 0.0155, "6M": 0.0160, "1Y": 0.0170}},
+    }
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

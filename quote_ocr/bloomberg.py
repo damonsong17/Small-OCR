@@ -256,6 +256,53 @@ def _mid(bid, ask):
     return bid if bid is not None else ask
 
 
+def _usd_per(fx: Dict[str, Dict[str, FxPoint]], ccy: str, tenor: str):
+    """Return (spot_bid, spot_ask, fwd_bid, fwd_ask, act) for CCY per 1 USD."""
+    direct = fx.get("USD" + ccy, {}).get(tenor)      # USDCCY = CCY per USD
+    if direct and None not in (direct.spot_bid, direct.spot_ask,
+                               direct.fwd_bid, direct.fwd_ask):
+        return (direct.spot_bid, direct.spot_ask, direct.fwd_bid,
+                direct.fwd_ask, direct.act)
+    inv = fx.get(ccy + "USD", {}).get(tenor)          # CCYUSD = USD per CCY
+    if inv and None not in (inv.spot_bid, inv.spot_ask, inv.fwd_bid, inv.fwd_ask):
+        return (1.0 / inv.spot_ask, 1.0 / inv.spot_bid,
+                1.0 / inv.fwd_ask, 1.0 / inv.fwd_bid, inv.act)
+    return None
+
+
+def triangulate(fx: Dict[str, Dict[str, FxPoint]], pairs: List[str],
+                tenors: List[str], pip: float = 10000.0) -> int:
+    """Fill in cross pairs that have no direct quotes, via their USD legs.
+
+    For pair XY (quote Y per base X):  XY = (Y per USD) / (X per USD).
+    Sides are crossed conservatively (bid/ask, ask/bid). Returns how many
+    pair-tenors were filled.
+    """
+    filled = 0
+    for pair in pairs:
+        base, quote = pair[:3], pair[3:]
+        if base == "USD" or quote == "USD":
+            continue
+        for t in tenors:
+            have = fx.get(pair, {}).get(t)
+            if have is not None and have.spot is not None and have.points is not None:
+                continue
+            num, den = _usd_per(fx, quote, t), _usd_per(fx, base, t)
+            if num is None or den is None:
+                continue
+            n_sb, n_sa, n_fb, n_fa, act = num
+            d_sb, d_sa, d_fb, d_fa, _ = den
+            s_bid, s_ask = n_sb / d_sa, n_sa / d_sb
+            f_bid, f_ask = n_fb / d_fa, n_fa / d_fb
+            spot, fwd = _mid(s_bid, s_ask), _mid(f_bid, f_ask)
+            fx.setdefault(pair, {})[t] = FxPoint(
+                tenor=t, spot=spot, points=(fwd - spot) * pip,
+                spot_bid=s_bid, spot_ask=s_ask, fwd_bid=f_bid, fwd_ask=f_ask,
+                act=act)
+            filled += 1
+    return filled
+
+
 def settle_dates(client, pair: str, tenors: List[str]) -> Dict[str, object]:
     """SETTLE_DT for spot and each forward tenor (the blpapi equivalent of
     Excel's BDP("CNH1M BGN Curncy","SETTLE_DT") -- same field mnemonic).
