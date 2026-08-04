@@ -311,19 +311,60 @@ def triangulate(fx: Dict[str, Dict[str, FxPoint]], pairs: List[str],
     return filled
 
 
-def build_fx_all(client, pairs: List[str], tenors: List[str],
-                 pip: float = 10000.0, verbose: bool = True) -> Dict[str, Dict[str, FxPoint]]:
-    """Fetch every pair: USD pairs directly, non-USD crosses by triangulation.
+def build_fx_from_tickers(client, pair: str, tenors: List[str],
+                          resolved: Dict[str, str], pip: float = 10000.0):
+    """Build a cross pair from explicitly resolved/overridden tickers."""
+    from .tickers import key as tkey
 
-    Only USD pairs follow the confirmed '<other ccy>+<tenor> Curncy' forward
-    ticker convention, so crosses are never requested directly -- they are
-    derived from their USD legs, keeping both legs on one source/timestamp.
+    spot_sec = resolved.get(tkey(pair))
+    secs = [s for s in [spot_sec] if s]
+    per_tenor = {}
+    for t in tenors:
+        s = resolved.get(tkey(pair, t))
+        if s:
+            per_tenor[t] = s
+            secs.append(s)
+    if not secs:
+        return {}
+
+    ref = client.reference(secs, list(FX_TICKERS["fields"]) + ["SETTLE_DT"])
+    sd = (ref.get(spot_sec) or {}) if spot_sec else {}
+    s_bid, s_ask = sd.get("PX_BID"), sd.get("PX_ASK")
+    spot = _mid(s_bid, s_ask)
+    spot_settle = sd.get("SETTLE_DT")
+
+    out = {}
+    for t, sec in per_tenor.items():
+        fd = ref.get(sec) or {}
+        f_bid, f_ask = fd.get("PX_BID"), fd.get("PX_ASK")
+        fwd_mid = _mid(f_bid, f_ask)
+        if spot is None or fwd_mid is None:
+            continue
+        fwd_settle = fd.get("SETTLE_DT")
+        out[t] = FxPoint(tenor=t, spot=spot, points=(fwd_mid - spot) * pip,
+                         spot_bid=s_bid, spot_ask=s_ask,
+                         fwd_bid=f_bid, fwd_ask=f_ask,
+                         spot_settle=spot_settle, fwd_settle=fwd_settle,
+                         act=act_days(spot_settle, fwd_settle))
+    return out
+
+
+def build_fx_all(client, pairs: List[str], tenors: List[str],
+                 pip: float = 10000.0, verbose: bool = True,
+                 cross_tickers: Optional[Dict[str, str]] = None
+                 ) -> Dict[str, Dict[str, FxPoint]]:
+    """Fetch every pair.
+
+    * USD pairs use the CONFIRMED '<other ccy>+<tenor> Curncy' convention.
+    * Crosses use explicitly resolved/overridden tickers when supplied
+      (see quote_ocr.tickers), otherwise they are derived from their USD legs.
+      Triangulation also fills any tenor a direct cross ticker did not return,
+      so a gap like CHFHKD 1Y is covered automatically.
     """
     direct = [p for p in pairs if is_usd_pair(p)]
     crosses = [p for p in pairs if not is_usd_pair(p)]
 
-    # Make sure every cross has its USD legs available, even if the caller did
-    # not ask for those pairs explicitly.
+    # every cross needs its two USD legs available for the fallback
     needed = set(direct)
     for p in crosses:
         for ccy in (p[:3], p[3:]):
@@ -333,10 +374,20 @@ def build_fx_all(client, pairs: List[str], tenors: List[str],
     fx: Dict[str, Dict[str, FxPoint]] = {}
     for p in sorted(needed):
         fx[p] = build_fx_market(client, p, tenors, pip=pip)
-    n = triangulate(fx, crosses, tenors, pip=pip)
+
+    n_direct = 0
+    if cross_tickers:
+        for p in crosses:
+            got = build_fx_from_tickers(client, p, tenors, cross_tickers, pip=pip)
+            if got:
+                fx.setdefault(p, {}).update(got)
+                n_direct += len(got)
+
+    n_tri = triangulate(fx, crosses, tenors, pip=pip)
     if verbose:
-        print(f"FX: {len(needed)} USD pair(s) fetched, "
-              f"{n} cross pair-tenor(s) triangulated")
+        print(f"FX: {len(needed)} USD pair(s) fetched"
+              + (f", {n_direct} cross pair-tenor(s) from resolved tickers" if n_direct else "")
+              + f", {n_tri} cross pair-tenor(s) triangulated")
     return fx
 
 

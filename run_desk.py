@@ -46,6 +46,8 @@ def main(argv=None):
     p.add_argument("--include-untradeable", action="store_true",
                    help="Do NOT exclude Korean/Taiwanese/Indian/ISLAMIC blocks.")
     p.add_argument("--out", default=None, help="Write FTP surface to this CSV.")
+    p.add_argument("--tickers", default="fx_tickers.json",
+                   help="Cross-pair ticker overrides (see fx_resolve.py).")
     p.add_argument("--live", action="store_true", help="Use the Bloomberg terminal.")
     args = p.parse_args(argv)
 
@@ -72,9 +74,13 @@ def main(argv=None):
     print(f"tenors: {', '.join(tenors)}\n")
 
     # ---- 2. FX market --------------------------------------------------------
+    from quote_ocr import tickers as tk
+    cross_tickers = tk.load_overrides(args.tickers)
+    if cross_tickers:
+        print(f"using {len(cross_tickers)} cross ticker mapping(s) from {args.tickers}")
     client = BloombergClient() if args.live else demo_mock_fx()
     with client as c:
-        fx = build_fx_all(c, pairs, tenors)
+        fx = build_fx_all(c, pairs, tenors, cross_tickers=cross_tickers)
     _fx_coverage(fx, pairs, tenors)
 
     # ---- 3. arbitrage across every pair -------------------------------------

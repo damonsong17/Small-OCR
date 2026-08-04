@@ -91,6 +91,31 @@ in the basis**. Consequently:
   3, 4). That is a phase-2 refinement; for detection, the basis itself is the
   output, not an error.
 
+## 4b. Cross-currency tickers — what is known vs. probed
+
+Bloomberg's cross forward naming is **not publicly documented and not uniform**.
+Observed on the terminal (user-verified):
+
+| pair | ticker | note |
+|---|---|---|
+| USD pairs | `<other ccy>+<tenor> Curncy` | CONFIRMED, uniform |
+| EURCHF / EURHKD / EURCNH | `EURCHF` etc. | spot tickers exist |
+| CHFHKD | `CHFHKD` | **except 1Y, which hovers as `HDSF1Y`** |
+| HKDCNH | `HKDCNH` | |
+| CHFCNH | no hover ticker; Help Desk suggests `BDP("CHF/CNH 3M Curncy",...)` | slash form |
+
+We do **not** hardcode guesses for these. `quote_ocr/tickers.py` probes candidate
+formats (`PAIRTENOR`, `PAIR+TENOR`, `BASE/QUOTE TENOR`, `PAIR TENOR`) and keeps
+whatever actually returns a price (`fx_resolve.py`), persisting to
+`fx_tickers.json`; a hand-verified exception such as `HDSF1Y` can be pinned
+there. Anything unresolved is **triangulated from the USD legs**, so coverage is
+complete either way.
+
+Note the slash form `CHF/CNH 3M Curncy` should work in blpapi because BDP is a
+thin wrapper over ReferenceDataRequest and passes the security string through
+verbatim — that is an INFERENCE from the confirmed BDP equivalence, not
+independent knowledge, and the probe settles it.
+
 ## 5. Status
 
 | item | status |
