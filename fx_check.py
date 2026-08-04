@@ -20,6 +20,7 @@ from quote_ocr.bloomberg import (
     _fwd_key,
     all_pairs,
     demo_mock_fx,
+    is_usd_pair,
 )
 
 FIELDS = ["PX_BID", "PX_ASK", "PX_LAST"]
@@ -55,7 +56,9 @@ def main(argv=None):
         secs = [s.strip() for s in args.raw.split(",") if s.strip()]
     else:
         secs = []
-        for pair in all_pairs(ccys):
+        # Only USD pairs follow the '<other ccy>+<tenor> Curncy' convention;
+        # crosses are derived by triangulation, so they are not checked here.
+        for pair in [p for p in all_pairs(ccys) if is_usd_pair(p)]:
             secs += sec_variants(FX_TICKERS["spot"].format(pair=pair), sources)
             fwd = _fwd_key(pair)
             for t in tenors:

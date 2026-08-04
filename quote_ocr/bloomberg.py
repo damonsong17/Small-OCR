@@ -198,19 +198,27 @@ def all_pairs(currencies: List[str]) -> List[str]:
     return out
 
 
+def is_usd_pair(pair: str) -> bool:
+    return "USD" in (pair[:3], pair[3:])
+
+
 def _fwd_key(pair: str) -> str:
     """Root used for FX forward tickers.
 
-    For USD pairs Bloomberg keys forwards off the non-USD leg (CNH+1M, EUR+1M).
-    For crosses (no USD leg) the full pair is used (EURCHF+1M) -- VERIFY on the
-    terminal; if a cross returns no data, that is the ticker root to adjust.
+    CONFIRMED convention: a USD pair's forwards are keyed off the OTHER
+    currency -- USDCNH -> 'CNH+1M Curncy', EURUSD -> 'EUR+1M Curncy'.
+
+    Non-USD crosses do not follow this rule, so we never request them directly;
+    they are derived from their two USD legs by triangulate(). That also keeps
+    both legs on the same source and timestamp, which matters for arbitrage
+    detection (mixing sources manufactures false signals).
     """
     base, quote = pair[:3], pair[3:]
     if base == "USD":
         return quote
     if quote == "USD":
         return base
-    return pair
+    return pair  # not requested directly; see triangulate()
 
 
 def build_fx_market(client, pair: str, tenors: List[str], pip: float = 10000.0,
@@ -301,6 +309,35 @@ def triangulate(fx: Dict[str, Dict[str, FxPoint]], pairs: List[str],
                 act=act)
             filled += 1
     return filled
+
+
+def build_fx_all(client, pairs: List[str], tenors: List[str],
+                 pip: float = 10000.0, verbose: bool = True) -> Dict[str, Dict[str, FxPoint]]:
+    """Fetch every pair: USD pairs directly, non-USD crosses by triangulation.
+
+    Only USD pairs follow the confirmed '<other ccy>+<tenor> Curncy' forward
+    ticker convention, so crosses are never requested directly -- they are
+    derived from their USD legs, keeping both legs on one source/timestamp.
+    """
+    direct = [p for p in pairs if is_usd_pair(p)]
+    crosses = [p for p in pairs if not is_usd_pair(p)]
+
+    # Make sure every cross has its USD legs available, even if the caller did
+    # not ask for those pairs explicitly.
+    needed = set(direct)
+    for p in crosses:
+        for ccy in (p[:3], p[3:]):
+            if ccy != "USD":
+                needed.add(order_pair("USD", ccy))
+
+    fx: Dict[str, Dict[str, FxPoint]] = {}
+    for p in sorted(needed):
+        fx[p] = build_fx_market(client, p, tenors, pip=pip)
+    n = triangulate(fx, crosses, tenors, pip=pip)
+    if verbose:
+        print(f"FX: {len(needed)} USD pair(s) fetched, "
+              f"{n} cross pair-tenor(s) triangulated")
+    return fx
 
 
 def settle_dates(client, pair: str, tenors: List[str]) -> Dict[str, object]:

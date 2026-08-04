@@ -15,7 +15,7 @@ from __future__ import annotations
 import argparse
 
 from quote_ocr import arb
-from quote_ocr.bloomberg import BloombergClient, build_fx_market, demo_mock_fx
+from quote_ocr.bloomberg import BloombergClient, build_fx_all, demo_mock_fx
 
 
 DEMO_SURFACE = {  # illustrative funding rates (decimal) when no --db given
@@ -63,7 +63,7 @@ def main(argv=None):
     # 2) FX market data (live terminal or mock)
     client = BloombergClient() if args.live else demo_mock_fx()
     with client as c:
-        fx = {pr: build_fx_market(c, pr, tenors) for pr in pairs}
+        fx = build_fx_all(c, pairs, tenors)
 
     # 2b) show the raw Bloomberg bid/ask actually captured (ticker verification)
     for pr, m in fx.items():

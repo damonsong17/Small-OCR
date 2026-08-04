@@ -43,7 +43,11 @@ This matches source (2). `ReferenceDataRequest` = snapshot; `MarketDataRequest`
 - **Two-sided FX uses `PX_BID` / `PX_ASK`** (we switched off `PX_LAST`).
 - **spot**: `USDCNH Curncy`.
 - **forward outright**: non-USD leg + `+` + tenor → `CNH+1M Curncy` (USDCNH),
-  `EUR+1M Curncy` (EURUSD).
+  `EUR+1M Curncy` (EURUSD). **CONFIRMED on the terminal**: every USD pair keys
+  its forwards off the *other* currency. This holds for USD pairs only — non-USD
+  crosses are never requested directly; `triangulate()` derives them from the two
+  USD legs, which also keeps both legs on one source and timestamp (mixing
+  sources manufactures false arbitrage signals).
 - **forward points**: same, no `+` → `CNH1M Curncy`.
 - Excel equivalents: `=BFXFORWARD("USDCNH","1M","BidOutright"|"AskOutright"|"BidPoints"|"AskPoints")`.
 - **`BFXFORWARD` / `BFXIMPLIEDFORWARD` are NOT callable from blpapi** — you pull

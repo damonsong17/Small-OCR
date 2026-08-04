@@ -25,9 +25,8 @@ from quote_ocr import arb, ftp as ftp_mod, sources
 from quote_ocr.bloomberg import (
     BloombergClient,
     all_pairs,
-    build_fx_market,
+    build_fx_all,
     demo_mock_fx,
-    triangulate,
 )
 
 
@@ -75,10 +74,7 @@ def main(argv=None):
     # ---- 2. FX market --------------------------------------------------------
     client = BloombergClient() if args.live else demo_mock_fx()
     with client as c:
-        fx = {pr: build_fx_market(c, pr, tenors) for pr in pairs}
-    n = triangulate(fx, pairs, tenors)   # fill crosses from their USD legs
-    if n:
-        print(f"triangulated {n} cross pair-tenor(s) from USD legs")
+        fx = build_fx_all(c, pairs, tenors)
     _fx_coverage(fx, pairs, tenors)
 
     # ---- 3. arbitrage across every pair -------------------------------------
