@@ -242,6 +242,29 @@ def _mid(bid, ask):
     return bid if bid is not None else ask
 
 
+def settle_dates(client, pair: str, tenors: List[str]) -> Dict[str, object]:
+    """SETTLE_DT for spot and each forward tenor (the blpapi equivalent of
+    Excel's BDP("CNH1M BGN Curncy","SETTLE_DT") -- same field mnemonic).
+
+    Returns {'spot': date, '<tenor>': date, ...}. Note the *points* ticker
+    (no '+') is used here, matching the Help Desk's BDP example.
+    """
+    fwd = _fwd_key(pair)
+    spot_sec = FX_TICKERS["spot"].format(pair=pair)
+    secs = {"spot": spot_sec}
+    for t in tenors:
+        secs[t] = FX_TICKERS["points"].format(fwd=fwd, tenor=TENOR_CODE.get(t, t))
+    ref = client.reference(list(secs.values()), ["SETTLE_DT"])
+    return {k: (ref.get(v) or {}).get("SETTLE_DT") for k, v in secs.items()}
+
+
+def act_days(spot_settle, fwd_settle) -> Optional[int]:
+    """Actual days between the spot and forward settlement dates."""
+    if spot_settle is None or fwd_settle is None:
+        return None
+    return (fwd_settle - spot_settle).days
+
+
 def _quote(bid, ask):
     return {"PX_BID": bid, "PX_ASK": ask}
 
