@@ -9,17 +9,23 @@ Design constraints (moving code between an online and an offline box is slow):
   * Everything is fixable ON THE OFFLINE BOX without a code change or a new
     bundle: edit ``fx_tickers.json`` (plain JSON, any text editor) and rerun.
 
-OBSERVED on the terminal (hover), and nothing beyond it is assumed:
+VERIFIED live (2026-08) across every cross pair and tenor probed:
 
-  * cross pairs use their PLAIN pair name for spot and for the ordinary tenors
-    (EURCNH stays EURCNH);
-  * ONLY the 12M point is special, using a 2-letter-code form:
-        EURCNH -> CGEU12M   EURHKD -> HDEU12M   EURCHF -> SFEU12M
-        HKDCNH -> CGHD12M   CHFHKD -> HDSF1Y    (1Y, not 12M)
+    "<BASE>/<QUOTE> <TENOR> Curncy"   e.g. "EUR/CNH 3M Curncy"
 
-Those five are stored verbatim. The 2-letter-code form is NOT extrapolated to
-other tenors -- for 1M/3M/6M the plain pair name is tried first, and the code
-form is kept only as a last-resort fallback that costs nothing if wrong.
+is the ONE form that always resolves AND always returns a forward OUTRIGHT
+(11/11: EUR/CNH 3M|12M|1Y, EUR/HKD 12M|1Y, EUR/CHF 12M|1Y, CHF/HKD 12M|1Y,
+CHF/CNH 3M|6M). It is therefore the canonical cross ticker -- no probing needed.
+
+The other shapes are erratic and are kept only as fallbacks:
+  * ``EURCNH12M`` / ``CGEU12M``  -> resolve but return POINTS, not outrights;
+  * ``CHFHKD12M`` / ``HDSF12M``  -> error, yet ``HDSF1Y`` / ``CHFHKD1Y`` work
+    (points), so the tenor spelling is not even consistent per pair;
+  * ``CHFCNH3M`` / ``CGSF3M``    -> do not exist at all;
+  * ``PAIR+TENOR`` and ``PAIR TENOR`` -> always error for crosses.
+
+Anything still unresolved is triangulated from the USD legs, and every mapping
+can be overridden by hand in ``fx_tickers.json`` on the offline machine.
 """
 from __future__ import annotations
 
@@ -115,8 +121,15 @@ def defaults() -> Dict[str, str]:
     return out
 
 
+def cross_ticker(pair: str, tenor: Optional[str] = None) -> str:
+    """The canonical, VERIFIED cross ticker: 'EUR/CNH 3M Curncy'."""
+    base, quote = pair[:3], pair[3:]
+    return f"{base}/{quote} Curncy" if tenor is None \
+        else f"{base}/{quote} {tenor} Curncy"
+
+
 def candidates(pair: str, tenor: Optional[str] = None) -> List[str]:
-    """Candidate tickers, most likely first. Never raises; always returns some."""
+    """Candidate tickers, verified form first. Never raises."""
     base, quote = pair[:3], pair[3:]
     out: List[str] = []
 
@@ -124,28 +137,20 @@ def candidates(pair: str, tenor: Optional[str] = None) -> List[str]:
         if s not in out:
             out.append(s)
 
+    add(cross_ticker(pair, tenor))            # VERIFIED, returns an outright
+
     if tenor is None:
-        if pair in CONFIRMED_CROSS_SPOT:
-            add(CONFIRMED_CROSS_SPOT[pair])
-        add(f"{pair} Curncy")
-        add(f"{base}/{quote} Curncy")
+        add(f"{pair} Curncy")                 # also works for most crosses
         return out
 
     if (pair, tenor) in CONFIRMED_CROSS_FWD:
-        add(CONFIRMED_CROSS_FWD[(pair, tenor)])   # observed verbatim
+        add(CONFIRMED_CROSS_FWD[(pair, tenor)])   # observed (returns POINTS)
 
     cq, cb = code_of(quote), code_of(base)
-
     for tv in TENOR_ALIASES.get(tenor, [tenor]):
-        # VERIFIED: the slash form is the only one that worked for BOTH EURCNH
-        # and CHFCNH, and it returns an OUTRIGHT, so it leads.
-        add(f"{base}/{quote} {tv} Curncy")    # EUR/CNH 3M, CHF/CNH 3M
-        # These return forward POINTS (handled by bloomberg.quote_kind).
-        add(f"{pair}{tv} Curncy")             # EURCNH3M  -> points
+        add(f"{pair}{tv} Curncy")             # EURCNH3M  -> points (erratic)
         if cq and cb:
-            add(f"{cq}{cb}{tv} Curncy")       # CGEU3M    -> points
-        add(f"{pair}+{tv} Curncy")            # (errored for crosses; harmless)
-        add(f"{pair} {tv} Curncy")
+            add(f"{cq}{cb}{tv} Curncy")       # CGEU3M    -> points (erratic)
     return out
 
 

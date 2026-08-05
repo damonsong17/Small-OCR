@@ -444,17 +444,25 @@ def build_fx_all(client, pairs: List[str], tenors: List[str],
             print(f"  ! {p}: fetch failed ({e})")
             fx[p] = {}
 
+    # Crosses: the VERIFIED "BASE/QUOTE TENOR Curncy" form is used by default
+    # (it resolved for every pair/tenor tested and always returns an outright).
+    # Anything in cross_tickers overrides it, hand-editable on the offline box.
+    from .tickers import cross_ticker, key as tkey
+
     n_direct = 0
-    if cross_tickers:
-        for p in crosses:
-            try:
-                got = build_fx_from_tickers(client, p, tenors, cross_tickers, pip=pip)
-            except Exception as e:
-                print(f"  ! {p}: cross fetch failed ({e}); will triangulate")
-                got = {}
-            if got:
-                fx.setdefault(p, {}).update(got)
-                n_direct += len(got)
+    for p in crosses:
+        resolved = dict(cross_tickers or {})
+        resolved.setdefault(tkey(p), cross_ticker(p))
+        for t in tenors:
+            resolved.setdefault(tkey(p, t), cross_ticker(p, t))
+        try:
+            got = build_fx_from_tickers(client, p, tenors, resolved, pip=pip)
+        except Exception as e:
+            print(f"  ! {p}: cross fetch failed ({e}); will triangulate")
+            got = {}
+        if got:
+            fx.setdefault(p, {}).update(got)
+            n_direct += len(got)
 
     n_tri = triangulate(fx, crosses, tenors, pip=pip)
     if verbose:
