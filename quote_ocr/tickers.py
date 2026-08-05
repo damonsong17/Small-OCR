@@ -60,12 +60,22 @@ CONFIRMED_CROSS_SPOT = {
 }
 
 # CONFIRMED cross FORWARD tickers, observed on the terminal.
+# NOTE these 12M forms return forward POINTS, not outrights -- bloomberg.py
+# classifies and converts them. The slash form (EUR/CNH 12M Curncy) returns an
+# outright and is tried first; these stay as reliable alternates.
 CONFIRMED_CROSS_FWD = {
     ("EURCNH", "1Y"): "CGEU12M Curncy",
     ("EURHKD", "1Y"): "HDEU12M Curncy",
     ("EURCHF", "1Y"): "SFEU12M Curncy",
     ("HKDCNH", "1Y"): "CGHD12M Curncy",
     ("CHFHKD", "1Y"): "HDSF1Y Curncy",
+}
+
+# VERIFIED live (2026-08), kept so the resolver needs no probing for these:
+VERIFIED_CROSS = {
+    "EURCNH|3M": "EUR/CNH 3M Curncy",   # outright (EURCNH3M/CGEU3M give points)
+    "CHFCNH|3M": "CHF/CNH 3M Curncy",   # outright; only form that worked
+    "CHFCNH|SPOT": "CHFCNH Curncy",
 }
 
 
@@ -101,6 +111,7 @@ def key(pair: str, tenor: Optional[str] = None) -> str:
 def defaults() -> Dict[str, str]:
     out = {key(p): sec for p, sec in CONFIRMED_CROSS_SPOT.items()}
     out.update({key(p, t): sec for (p, t), sec in CONFIRMED_CROSS_FWD.items()})
+    out.update(VERIFIED_CROSS)
     return out
 
 
@@ -124,21 +135,17 @@ def candidates(pair: str, tenor: Optional[str] = None) -> List[str]:
         add(CONFIRMED_CROSS_FWD[(pair, tenor)])   # observed verbatim
 
     cq, cb = code_of(quote), code_of(base)
-    is_year = tenor.upper() in ("1Y", "12M")
 
     for tv in TENOR_ALIASES.get(tenor, [tenor]):
-        # OBSERVED: only the 12M point uses the 2-letter-code form, so it leads
-        # for year tenors only. For every other tenor the plain pair name is
-        # what the terminal shows, so that goes first.
-        if is_year and cq and cb:
-            add(f"{cq}{cb}{tv} Curncy")
-        add(f"{pair}{tv} Curncy")             # EURCNH3M   (plain pair, observed)
-        add(f"{pair}+{tv} Curncy")            # EURCNH+3M
-        add(f"{base}/{quote} {tv} Curncy")    # CHF/CNH 3M (Help Desk form)
-        add(f"{pair} {tv} Curncy")            # EURCNH 3M
-        # last-resort only; NOT an observed convention for non-year tenors
-        if not is_year and cq and cb:
-            add(f"{cq}{cb}{tv} Curncy")
+        # VERIFIED: the slash form is the only one that worked for BOTH EURCNH
+        # and CHFCNH, and it returns an OUTRIGHT, so it leads.
+        add(f"{base}/{quote} {tv} Curncy")    # EUR/CNH 3M, CHF/CNH 3M
+        # These return forward POINTS (handled by bloomberg.quote_kind).
+        add(f"{pair}{tv} Curncy")             # EURCNH3M  -> points
+        if cq and cb:
+            add(f"{cq}{cb}{tv} Curncy")       # CGEU3M    -> points
+        add(f"{pair}+{tv} Curncy")            # (errored for crosses; harmless)
+        add(f"{pair} {tv} Curncy")
     return out
 
 

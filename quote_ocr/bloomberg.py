@@ -281,6 +281,51 @@ def _mid(bid, ask):
     return bid if bid is not None else ask
 
 
+def pip_of(pair: str) -> float:
+    """Pip factor: JPY pairs quote to 2 decimals, everything here to 4."""
+    return 100.0 if "JPY" in (pair[:3], pair[3:]) else 10000.0
+
+
+# VERIFIED on the terminal (2026-08): the same tenor is published both ways.
+#   EURCNH3M Curncy   -> -229.11 / -221.03   = forward POINTS
+#   CGEU3M   Curncy   -> -229.11 / -221.03   = forward POINTS (same numbers)
+#   EUR/CNH 3M Curncy ->    7.7716 / 7.7734  = forward OUTRIGHT
+# Misreading points as an outright produces nonsense, so every forward value is
+# classified before use.
+def quote_kind(ticker: str) -> str:
+    """'outright' | 'points', inferred from the ticker's shape."""
+    t = ticker.replace(" Curncy", "").strip()
+    if "/" in t:
+        return "outright"        # EUR/CNH 3M, CHF/CNH 3M
+    if "+" in t:
+        return "outright"        # CNH+1M (USD pairs)
+    return "points"              # EURCNH3M, CGEU3M, CNH1M
+
+
+def to_outright(value: Optional[float], spot: Optional[float], kind: str,
+                pip: float, label: str = "") -> Optional[float]:
+    """Return a forward OUTRIGHT from a raw quote, whatever it represents.
+
+    The declared kind leads; a sanity check against spot catches a
+    misclassification instead of silently producing a nonsense rate.
+    """
+    if value is None:
+        return None
+    if spot is None or spot == 0:
+        return value if kind == "outright" else None
+
+    looks_outright = abs(value - spot) / abs(spot) < 0.5
+    if kind == "outright" and not looks_outright:
+        print(f"  ! {label}: declared outright but {value} is far from spot "
+              f"{spot}; treating as points")
+        kind = "points"
+    elif kind == "points" and looks_outright and abs(value) > 1.0:
+        print(f"  ! {label}: declared points but {value} looks like a rate; "
+              f"treating as outright")
+        kind = "outright"
+    return value if kind == "outright" else spot + value / pip
+
+
 def _usd_per(fx: Dict[str, Dict[str, FxPoint]], ccy: str, tenor: str):
     """Return (spot_bid, spot_ask, fwd_bid, fwd_ask, act) for CCY per 1 USD."""
     direct = fx.get("USD" + ccy, {}).get(tenor)      # USDCCY = CCY per USD
@@ -353,7 +398,10 @@ def build_fx_from_tickers(client, pair: str, tenors: List[str],
     out = {}
     for t, sec in per_tenor.items():
         fd = ref.get(sec) or {}
-        f_bid, f_ask = fd.get("PX_BID"), fd.get("PX_ASK")
+        kind = quote_kind(sec)
+        lbl = f"{pair} {t} [{sec}]"
+        f_bid = to_outright(fd.get("PX_BID"), s_bid or spot, kind, pip, lbl)
+        f_ask = to_outright(fd.get("PX_ASK"), s_ask or spot, kind, pip, lbl)
         fwd_mid = _mid(f_bid, f_ask)
         if spot is None or fwd_mid is None:
             continue
