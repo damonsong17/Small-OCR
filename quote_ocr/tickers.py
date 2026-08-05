@@ -21,6 +21,19 @@ from typing import Dict, List, Optional
 
 OVERRIDES_FILE = "fx_tickers.json"
 
+# CONFIRMED on the terminal: these cross pairs quote spot under their plain
+# pair name. Only the FORWARD tenor format is uncertain for crosses, so spot is
+# taken directly and never probed.
+CONFIRMED_CROSS_SPOT = {
+    "EURCHF": "EURCHF Curncy",
+    "EURHKD": "EURHKD Curncy",
+    "EURCNH": "EURCNH Curncy",
+    "CHFHKD": "CHFHKD Curncy",
+    "HKDCNH": "HKDCNH Curncy",
+    # CHFCNH shows no hover ticker; the Help Desk suggested the slash form,
+    # which the probe will confirm (see CROSS_SPOT_CANDIDATES).
+}
+
 # Candidate formats for a CROSS forward outright, tried in order.
 # {pair}=EURCHF, {base}=EUR, {quote}=CHF, {tenor}=3M
 CROSS_FORWARD_CANDIDATES = [
@@ -37,13 +50,15 @@ CROSS_SPOT_CANDIDATES = [
 
 
 def load_overrides(path: str = OVERRIDES_FILE) -> Dict[str, str]:
+    """Confirmed defaults, overlaid with anything resolved/pinned in the file."""
+    out = defaults()
     p = Path(path)
-    if not p.exists():
-        return {}
-    try:
-        return json.loads(p.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
+    if p.exists():
+        try:
+            out.update(json.loads(p.read_text(encoding="utf-8")))
+        except Exception:
+            pass
+    return out
 
 
 def save_overrides(mapping: Dict[str, str], path: str = OVERRIDES_FILE) -> None:
@@ -57,8 +72,15 @@ def key(pair: str, tenor: Optional[str] = None) -> str:
 
 def candidates(pair: str, tenor: Optional[str] = None) -> List[str]:
     base, quote = pair[:3], pair[3:]
+    if tenor is None and pair in CONFIRMED_CROSS_SPOT:
+        return [CONFIRMED_CROSS_SPOT[pair]]        # confirmed; no need to probe
     fmts = CROSS_FORWARD_CANDIDATES if tenor else CROSS_SPOT_CANDIDATES
     return [f.format(pair=pair, base=base, quote=quote, tenor=tenor) for f in fmts]
+
+
+def defaults() -> Dict[str, str]:
+    """Confirmed mappings available without any probing."""
+    return {key(p): sec for p, sec in CONFIRMED_CROSS_SPOT.items()}
 
 
 def resolve(client, pairs: List[str], tenors: List[str],

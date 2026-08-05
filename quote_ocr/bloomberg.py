@@ -177,12 +177,29 @@ class FxPoint:
 
 # Market quoting convention: the currency earlier in this list is the BASE.
 # (EUR/USD, USD/CHF, USD/CNH, ... ) Extend as new currencies are added.
-QUOTE_ORDER = ["EUR", "GBP", "AUD", "NZD", "USD", "CAD", "CHF", "CNH", "CNY",
-               "HKD", "SGD", "JPY"]
+QUOTE_ORDER = ["EUR", "GBP", "AUD", "NZD", "USD", "CAD", "CHF", "HKD", "CNH",
+               "CNY", "SGD", "JPY"]
+
+# Pair names verified on the terminal, overriding the ranking above.
+# Confirmed: EURCHF, EURHKD, EURCNH, CHFHKD, CHFCNH, HKDCNH (note HKD before
+# CNH, which the generic ranking would otherwise get wrong).
+PAIR_OVERRIDES = {
+    frozenset({"HKD", "CNH"}): "HKDCNH",
+    frozenset({"EUR", "CHF"}): "EURCHF",
+    frozenset({"EUR", "HKD"}): "EURHKD",
+    frozenset({"EUR", "CNH"}): "EURCNH",
+    frozenset({"CHF", "HKD"}): "CHFHKD",
+    frozenset({"CHF", "CNH"}): "CHFCNH",
+}
 
 
 def order_pair(a: str, b: str) -> str:
     """Return the market-convention pair string for two currencies."""
+    a, b = a.upper(), b.upper()
+    override = PAIR_OVERRIDES.get(frozenset({a, b}))
+    if override and a != b:
+        return override
+
     def rank(c):
         return QUOTE_ORDER.index(c) if c in QUOTE_ORDER else len(QUOTE_ORDER)
     return (a + b) if rank(a) <= rank(b) else (b + a)
