@@ -37,8 +37,11 @@ def main(argv=None):
     p.add_argument("--ccy", default="USD,CNH,CHF,EUR,HKD",
                    help="Currencies; all pair combinations are checked "
                         "(ignored if --pairs is given).")
-    p.add_argument("--tenors", default="1M,3M,6M,1Y", help="Tenors to check.")
+    p.add_argument("--tenors", default="1M,3M,6M,1Y",
+                   help="Tenors (sources quote 1M/3M/6M/1Y only).")
     p.add_argument("--threshold", type=float, default=0.5, help="Min bps to flag.")
+    p.add_argument("--no-mismatch", action="store_true",
+                   help="Only same-tenor round trips.")
     p.add_argument("--live", action="store_true", help="Use the Bloomberg terminal.")
     args = p.parse_args(argv)
 
@@ -73,7 +76,8 @@ def main(argv=None):
 
     # 3) scan the channel surface for cross-currency arbitrage
     opps = arb.scan_surface_noarb(surface, fx, pairs, tenors,
-                                  channel=args.channel, threshold_bps=args.threshold)
+                                  channel=args.channel, threshold_bps=args.threshold,
+                                  allow_mismatch=not args.no_mismatch)
     _report(args.channel, opps)
 
 
@@ -83,7 +87,7 @@ def _report(channel, opps):
     if not opps:
         print("  none above threshold.")
         return
-    cols = [("pair", 8), ("tenor", 6), ("pnl_bps", 9), ("risk_type", 34), ("detail", 60)]
+    cols = [("pair", 8), ("pnl_bps", 9), ("risk_type", 40), ("detail", 86)]
     print("  ".join(h.ljust(w) for h, w in cols))
     print("-" * 120)
     for o in sorted(opps, key=lambda x: -x.pnl_bps):

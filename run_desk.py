@@ -37,9 +37,16 @@ def main(argv=None):
     p.add_argument("--date", default=None, help="Quote date, e.g. 2026-07-16.")
     p.add_argument("--txt", action="append", default=[],
                    help="Extra quote file (.txt/.csv); repeatable.")
+    p.add_argument("--quote", action="append", default=[],
+                   help="Ad-hoc quote, e.g. --quote \"USD,3M,4.00,4.10\"; "
+                        "repeatable. For a broker's quote typed in on the spot.")
     p.add_argument("--ccy", default="USD,CNH,CHF,EUR,HKD", help="Currencies.")
-    p.add_argument("--tenors", default="1M,3M,6M,1Y", help="Tenors.")
+    p.add_argument("--tenors", default="1M,3M,6M,1Y",
+                   help="Tenors (sources quote 1M/3M/6M/1Y only).")
     p.add_argument("--threshold", type=float, default=0.5, help="Min bps to flag.")
+    p.add_argument("--no-mismatch", action="store_true",
+                   help="Only same-tenor round trips (default allows a tenor "
+                        "mismatch, flagged as gap/rollover risk).")
     p.add_argument("--margin-bps", type=float, default=5.0, help="FTP margin (bps).")
     p.add_argument("--mode", default="bid", choices=["bid", "offer"],
                    help="Which side to tighten when enforcing FTP no-arb.")
@@ -64,6 +71,8 @@ def main(argv=None):
             surfaces.append(sources.surface_from_store(store, args.date, ccys, excl))
     for path in args.txt:
         surfaces.append(sources.surface_from_text(path, excl))
+    if args.quote:
+        surfaces.append(sources.surface_from_lines(args.quote, "manual quotes"))
     if not surfaces:
         print("(no --db/--txt given; using demo funding surface)")
         surfaces.append(_demo_surface())
@@ -85,7 +94,8 @@ def main(argv=None):
 
     # ---- 3. arbitrage across every pair -------------------------------------
     opps = arb.scan_surface_noarb(surface, fx, pairs, tenors,
-                                  channel="CHANNELS", threshold_bps=args.threshold)
+                                  channel="CHANNELS", threshold_bps=args.threshold,
+                                  allow_mismatch=not args.no_mismatch)
     _print_opps(opps)
 
     # ---- 4. FTP surface, made arbitrage free --------------------------------
@@ -94,9 +104,11 @@ def main(argv=None):
     _print_ftp(ftp_surface, tenors, adjustments)
 
     # ---- 5. verify the published FTP cannot be arbitraged --------------------
+    # Same-tenor only: a maturity mismatch is a gap position with real risk,
+    # not a closed arbitrage, so it must not block publishing.
     residual = arb.scan_surface_noarb(ftp_surface, fx, pairs, tenors,
                                       channel="OUR_FTP", kind="ftp_self_arb",
-                                      threshold_bps=0.01)
+                                      threshold_bps=0.01, allow_mismatch=False)
     if residual:
         print(f"\n!! FTP STILL ARBITRAGEABLE: {len(residual)} route(s) -- do not publish")
         for o in residual[:5]:
@@ -141,7 +153,7 @@ def _print_opps(opps):
     if not opps:
         print("  none above threshold.\n")
         return
-    cols = [("pair", 8), ("tenor", 6), ("pnl_bps", 9), ("risk_type", 34), ("detail", 72)]
+    cols = [("pair", 8), ("pnl_bps", 9), ("risk_type", 40), ("detail", 86)]
     print("  ".join(h.ljust(w) for h, w in cols))
     print("-" * 132)
     for o in sorted(opps, key=lambda x: -x.pnl_bps):
