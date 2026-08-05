@@ -12,9 +12,10 @@ Run this before a trade so the market leg uses the latest Bloomberg data.
     # extra channels from text files (future sources)
     python run_desk.py --txt hq_funding.txt --txt broker2.txt --live
 
-Untradeable AFS blocks (Korean / Taiwanese / Indian / ISLAMIC) are excluded
-automatically -- we cannot obtain those prices, so they must never drive
-pricing or signals.
+Counterparties we have no KYC relationship with (Korean / Taiwanese / Indian /
+ISLAMIC on the AFS sheet) are excluded automatically: their quotes are real but
+we cannot obtain those prices, so trading on them would flag arbitrage we could
+never execute. Edit segments.json to change access as KYC relationships change.
 """
 from __future__ import annotations
 
@@ -51,13 +52,17 @@ def main(argv=None):
     p.add_argument("--mode", default="bid", choices=["bid", "offer"],
                    help="Which side to tighten when enforcing FTP no-arb.")
     p.add_argument("--include-untradeable", action="store_true",
-                   help="Do NOT exclude Korean/Taiwanese/Indian/ISLAMIC blocks.")
+                   help="Use every counterparty, including ones we have no KYC "
+                        "with (their prices are not obtainable -- diagnostics only).")
+    p.add_argument("--access", default=sources.ACCESS_FILE,
+                   help="Counterparty KYC access config (JSON).")
     p.add_argument("--out", default=None, help="Write FTP surface to this CSV.")
     p.add_argument("--tickers", default="fx_tickers.json",
                    help="Cross-pair ticker overrides (see fx_resolve.py).")
     p.add_argument("--live", action="store_true", help="Use the Bloomberg terminal.")
     args = p.parse_args(argv)
 
+    sources.load_access(args.access)
     ccys = [c.strip().upper() for c in args.ccy.split(",") if c.strip()]
     tenors = [t.strip() for t in args.tenors.split(",") if t.strip()]
     pairs = all_pairs(ccys)

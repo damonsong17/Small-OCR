@@ -16,18 +16,57 @@ import re
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional
 
-# Blocks we cannot transact -> never use for pricing or arbitrage.
-UNTRADEABLE_SEGMENTS = {
+# --- counterparty access (KYC) ------------------------------------------------
+# These blocks are quoted on the sheet and read correctly -- we simply CANNOT
+# TRANSACT them: without a KYC relationship we do not get those prices. Using
+# them would flag arbitrage we could never execute.
+#
+# This is a BUSINESS setting, not a data-quality one: it changes as KYC
+# relationships are opened or closed, so it is configurable (segments.json or
+# --no-kyc / --tradeable on the CLI) and must never require a code change.
+NO_KYC_SEGMENTS = {
     "korean", "korea",
     "taiwanese", "taiwan",
     "indian", "india",
     "islamic", "islamiic", "israel", "israeli",
 }
 
-# Segments we DO trade. Blank means "source has no segment concept" (a text
-# channel), which is fine. This whitelist is the primary gate: an unrecognised
-# or OCR-garbled segment is excluded by default rather than silently trusted.
+# Segments we DO have access to. Blank means the source has no segment concept
+# (a text/manual channel), which is fine.
 TRADEABLE_SEGMENTS = {"", "chinese"}
+
+# What to do with a segment that is in neither list (a new source, a new desk).
+# "exclude" is the safe default -- an unknown counterparty is assumed to have no
+# KYC until someone says otherwise -- but it is always reported, never silent.
+UNKNOWN_SEGMENT_POLICY = "exclude"
+
+ACCESS_FILE = "segments.json"
+
+# Backwards-compatible alias.
+UNTRADEABLE_SEGMENTS = NO_KYC_SEGMENTS
+
+
+def load_access(path: str = ACCESS_FILE) -> None:
+    """Load KYC access config: {"tradeable": [...], "no_kyc": [...],
+    "unknown": "exclude"|"include"}. Editable on the offline machine."""
+    import json
+    p = Path(path)
+    if not p.exists():
+        return
+    try:
+        cfg = json.loads(p.read_text(encoding="utf-8"))
+    except Exception as e:
+        print(f"  ! could not read {path} ({e}); using built-in access config")
+        return
+    global UNKNOWN_SEGMENT_POLICY
+    if "tradeable" in cfg:
+        TRADEABLE_SEGMENTS.clear()
+        TRADEABLE_SEGMENTS.update(s.strip().lower() for s in cfg["tradeable"])
+    if "no_kyc" in cfg:
+        NO_KYC_SEGMENTS.clear()
+        NO_KYC_SEGMENTS.update(s.strip().lower() for s in cfg["no_kyc"])
+    UNKNOWN_SEGMENT_POLICY = cfg.get("unknown", UNKNOWN_SEGMENT_POLICY)
+    print(f"  loaded counterparty access config from {path}")
 
 
 def _norm(segment: Optional[str]) -> str:
@@ -46,35 +85,59 @@ def _edit_distance(a: str, b: str, cap: int = 3) -> int:
     return prev[-1]
 
 
-def looks_untradeable(segment: Optional[str]) -> bool:
-    """Fuzzy match against the untradeable names.
+def _matches(name: str, group) -> bool:
+    """Match a segment name against a configured group.
 
-    OCR mangles these labels (ISLAMlC, lndian, Taiwanes, 'ISLAMIC BANK'), so an
-    exact blacklist leaks. Substring, truncation and small typos all count.
+    Exact after normalising, plus a small tolerance for OCR variants of the SAME
+    name (ISLAMlC, lndian, 'ISLAMIC BANK') -- that tolerance is a convenience,
+    not the reason for the exclusion.
     """
-    n = _norm(segment)
+    n = _norm(name)
     if not n:
         return False
-    for bad in UNTRADEABLE_SEGMENTS:
-        if bad in n or (len(n) >= 5 and n in bad):
+    for item in group:
+        g = _norm(item)
+        if not g:
+            continue
+        if n == g or g in n or (len(n) >= 5 and n in g):
             return True
-        if _edit_distance(n, bad) <= 2:
+        if _edit_distance(n, g) <= 2:
             return True
     return False
 
 
-def is_tradeable(segment: Optional[str], whitelist: bool = True) -> bool:
-    """Whether a segment's quotes may be used.
+def access_status(segment: Optional[str]) -> str:
+    """'tradeable' | 'no_kyc' | 'unknown' for a segment."""
+    n = _norm(segment)
+    if not n:
+        return "tradeable"          # source has no segment concept
+    if _matches(segment, NO_KYC_SEGMENTS):
+        return "no_kyc"
+    if _matches(segment, TRADEABLE_SEGMENTS):
+        return "tradeable"
+    return "unknown"
 
-    With ``whitelist`` (default) only known-good segments pass -- fail-safe
-    against OCR noise. Otherwise fall back to fuzzy blacklisting.
+
+def is_tradeable(segment: Optional[str], whitelist: bool = True) -> bool:
+    """Whether we can actually transact this segment's quotes.
+
+    ``whitelist`` is kept for compatibility; the decision is really the KYC
+    access config, with UNKNOWN_SEGMENT_POLICY deciding new/unseen segments.
     """
-    if looks_untradeable(segment):
+    st = access_status(segment)
+    if st == "no_kyc":
         return False
-    if whitelist:
-        n = _norm(segment)
-        return n in {_norm(s) for s in TRADEABLE_SEGMENTS}
+    if st == "unknown":
+        return UNKNOWN_SEGMENT_POLICY == "include" or not whitelist
     return True
+
+
+def reason(segment: Optional[str]) -> str:
+    return {
+        "no_kyc": "no KYC relationship - we cannot obtain these prices",
+        "unknown": "counterparty not in the access config",
+        "tradeable": "",
+    }[access_status(segment)]
 
 
 def empty_surface() -> Dict:
@@ -129,11 +192,15 @@ def surface_from_store(
                  offer / 100.0 if offer is not None else None)
     if verbose:
         if kept:
-            print("  segments USED:    "
+            print("  counterparties USED:     "
                   + ", ".join(f"{k} ({n})" for k, n in sorted(kept.items())))
-        if dropped:
-            print("  segments EXCLUDED: "
-                  + ", ".join(f"{k} ({n})" for k, n in sorted(dropped.items())))
+        for label, n in sorted(dropped.items()):
+            why = reason(None if label == "(none)" else label)
+            print(f"  counterparty EXCLUDED:   {label} ({n} rows) -- {why}")
+        unknown = [k for k in dropped if access_status(k) == "unknown"]
+        if unknown:
+            print(f"  -> to trade any of these, add it to \"tradeable\" in "
+                  f"{ACCESS_FILE}")
     return surface
 
 
