@@ -105,8 +105,13 @@ def main(argv=None):
         print("\nFTP check: no cross-currency arbitrage remaining -> safe to publish")
 
     if args.out:
-        _write_csv(ftp_surface, tenors, args.out)
-        print(f"wrote {args.out}")
+        try:
+            _write_csv(ftp_surface, tenors, args.out)
+            print(f"wrote {args.out}")
+        except PermissionError:
+            print(f"\n! could not write {args.out} -- it is open in another "
+                  f"program (Excel?). Close it, or pass a different --out. "
+                  f"Everything above is still valid.")
 
 
 def _fx_coverage(fx, pairs, tenors):
@@ -146,6 +151,7 @@ def _print_opps(opps):
 
 
 def _print_ftp(ftp_surface, tenors, adjustments):
+    from quote_ocr.pricing import lookup_tenor
     print("=== FTP SURFACE (%, arbitrage-free) ===")
     hdr = "  ccy   " + "".join(f"{t:>18}" for t in tenors)
     print(hdr)
@@ -153,8 +159,8 @@ def _print_ftp(ftp_surface, tenors, adjustments):
     for ccy in sorted(ftp_surface):
         cells = []
         for t in tenors:
-            b = ftp_surface[ccy]["bid"].get(t)
-            o = ftp_surface[ccy]["offer"].get(t)
+            b = lookup_tenor(ftp_surface[ccy]["bid"], t)
+            o = lookup_tenor(ftp_surface[ccy]["offer"], t)
             cells.append(f"{_p(b)}/{_p(o)}".rjust(18))
         print(f"  {ccy:5} " + "".join(cells))
     if adjustments:
@@ -173,6 +179,7 @@ def _p(v):
 
 
 def _write_csv(ftp_surface, tenors, path):
+    from quote_ocr.pricing import lookup_tenor
     with open(path, "w", newline="", encoding="utf-8-sig") as f:
         w = csv.writer(f)
         w.writerow(["currency", "tenor", "ftp_bid_pct", "ftp_offer_pct"])

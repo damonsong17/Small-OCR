@@ -22,8 +22,31 @@ from typing import Dict, List, Optional
 # Week tenors are the stable ones; month tenors always need SETTLE_DT.
 TENOR_DAYS = {
     "O/N": 1, "T/N": 1, "1W": 7, "2W": 14, "3W": 21,
-    "1M": 30, "2M": 60, "3M": 91, "4M": 121, "6M": 182, "9M": 273, "1Y": 365,
+    "1M": 30, "2M": 60, "3M": 91, "4M": 121, "6M": 182, "9M": 273,
+    "1Y": 365, "12M": 365,
 }
+
+# The same bucket is spelled differently by different sources: the OCR
+# normalises the sheet's "1y" to "1Y", while a caller may ask for "12M". Look
+# ups must accept either, or a whole tenor column silently comes back empty.
+_TENOR_EQUIV = [{"1Y", "12M"}, {"6M", "180D"}, {"O/N", "ON"}, {"T/N", "TN"}]
+
+
+def tenor_variants(tenor: str):
+    """All spellings of a tenor bucket, the given one first."""
+    t = (tenor or "").upper()
+    for group in _TENOR_EQUIV:
+        if t in group:
+            return [t] + [x for x in group if x != t]
+    return [t]
+
+
+def lookup_tenor(mapping, tenor):
+    """Get mapping[tenor], accepting any equivalent spelling."""
+    for t in tenor_variants(tenor):
+        if t in mapping:
+            return mapping[t]
+    return None
 
 
 @dataclass

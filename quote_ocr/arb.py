@@ -128,7 +128,8 @@ def scan_surface_noarb(
 
 
 def _g(surface, ccy, side, tenor):
-    return surface.get(ccy, {}).get(side, {}).get(tenor)
+    from .pricing import lookup_tenor
+    return lookup_tenor(surface.get(ccy, {}).get(side, {}), tenor)
 
 
 def surface_from_store(store, date: str, currencies: List[str]) -> Dict:

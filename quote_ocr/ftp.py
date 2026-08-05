@@ -115,15 +115,27 @@ def _apply(ftp, adjustments, victim_ccy, via_ccy, tenor, before, cap,
               f"lend {victim_ccy} (act={act})")
     if mode == "offer":
         # raise the borrow side of the OTHER currency instead
-        cur = ftp[via_ccy]["offer"].get(tenor)
+        cur = _get(ftp, via_ccy, "offer", tenor)
         need = cur + (before - cap)
-        ftp[via_ccy]["offer"][tenor] = need
+        _set(ftp, via_ccy, "offer", tenor, need)
         adjustments.append(FtpAdjustment(via_ccy, tenor, "offer", cur, need, reason))
         return True
-    ftp[victim_ccy]["bid"][tenor] = cap
+    _set(ftp, victim_ccy, "bid", tenor, cap)
     adjustments.append(FtpAdjustment(victim_ccy, tenor, "bid", before, cap, reason))
     return True
 
 
+def _set(surface, ccy, side, tenor, value):
+    """Write to the tenor key that already exists (1Y vs 12M), else create it."""
+    from .pricing import tenor_variants
+    d = surface.setdefault(ccy, {"bid": {}, "offer": {}})[side]
+    for t in tenor_variants(tenor):
+        if t in d:
+            d[t] = value
+            return
+    d[tenor] = value
+
+
 def _get(surface, ccy, side, tenor):
-    return surface.get(ccy, {}).get(side, {}).get(tenor)
+    from .pricing import lookup_tenor
+    return lookup_tenor(surface.get(ccy, {}).get(side, {}), tenor)
