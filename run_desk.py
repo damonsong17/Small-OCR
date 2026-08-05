@@ -118,15 +118,11 @@ def _fx_coverage(fx, pairs, tenors):
     total = len(pairs) * len(tenors)
     print(f"FX coverage: {total - len(missing)}/{total} pair-tenors")
     if missing:
-        from quote_ocr.bloomberg import FX_TICKERS, TENOR_CODE, _fwd_key, is_usd_pair
-        print("  MISSING (no direct ticker and USD legs unavailable):")
+        print("  MISSING (every candidate ticker failed, and no USD legs to "
+              "triangulate from):")
         for pr, t in missing[:15]:
-            if is_usd_pair(pr):
-                cands = FX_TICKERS["outright"].format(
-                    fwd=_fwd_key(pr), tenor=TENOR_CODE.get(t, t)).replace(" Curncy", "")
-            else:
-                cands = ", ".join(c.replace(" Curncy", "")
-                                  for c in tk.candidates(pr, t)[:4])
+            cands = ", ".join(c.replace(" Curncy", "")
+                              for c in tk.candidates(pr, t))
             print(f"    {pr} {t:4} -- tried: {cands}")
         if len(missing) > 15:
             print(f"    ... {len(missing)-15} more")

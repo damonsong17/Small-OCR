@@ -238,33 +238,56 @@ def _fwd_key(pair: str) -> str:
     return pair  # not requested directly; see triangulate()
 
 
+def _first_with_data(ref: Dict, secs: List[str]):
+    """Return (ticker, record) for the first candidate that returned a price."""
+    for s in secs:
+        rec = ref.get(s) or {}
+        if rec.get("__error__"):
+            continue
+        if rec.get("PX_BID") is not None or rec.get("PX_ASK") is not None:
+            return s, rec
+    return None, {}
+
+
 def build_fx_market(client, pair: str, tenors: List[str], pip: float = 10000.0,
-                    with_settle: bool = True) -> Dict[str, FxPoint]:
-    """Pull spot + forward outright (bid/ask), derive points, and (by default)
-    the SETTLE_DT of each leg so the ACTUAL day count `act` is available."""
+                    with_settle: bool = True,
+                    overrides: Optional[Dict[str, str]] = None) -> Dict[str, FxPoint]:
+    """Pull spot + forward for one pair, trying several ticker formats.
+
+    Every pair -- USD or cross -- goes through the same candidate list, because
+    the '<other>+<tenor>' form confirmed for USDCNH is NOT universal, and a
+    failed USD leg silently breaks the crosses that triangulate from it.
+    """
+    from .tickers import candidates, key as tkey
+
     fields = list(FX_TICKERS["fields"])
     if with_settle:
         fields.append("SETTLE_DT")
-    spot_sec = FX_TICKERS["spot"].format(pair=pair)
-    fwd = _fwd_key(pair)
-    secs = [spot_sec]
+    ov = overrides or {}
+
+    spot_cands = [ov[tkey(pair)]] if tkey(pair) in ov else candidates(pair)
     per_tenor = {}
     for t in tenors:
-        code = TENOR_CODE.get(t, t)
-        sec = FX_TICKERS["outright"].format(fwd=fwd, tenor=code)
-        per_tenor[t] = sec
-        secs.append(sec)
+        k = tkey(pair, t)
+        per_tenor[t] = [ov[k]] if k in ov else candidates(pair, t)
 
+    secs = sorted({s for lst in [spot_cands] + list(per_tenor.values()) for s in lst})
     ref = client.reference(secs, fields)
-    sd = ref.get(spot_sec) or {}
+
+    spot_sec, sd = _first_with_data(ref, spot_cands)
     s_bid, s_ask = sd.get("PX_BID"), sd.get("PX_ASK")
     spot = _mid(s_bid, s_ask)
     spot_settle = sd.get("SETTLE_DT") if with_settle else None
 
     out = {}
-    for t, sec in per_tenor.items():
-        fd = ref.get(sec) or {}
-        f_bid, f_ask = fd.get("PX_BID"), fd.get("PX_ASK")
+    for t, cands in per_tenor.items():
+        sec, fd = _first_with_data(ref, cands)
+        if sec is None:
+            continue
+        kind = quote_kind(sec)
+        lbl = f"{pair} {t} [{sec}]"
+        f_bid = to_outright(fd.get("PX_BID"), s_bid or spot, kind, pip, lbl)
+        f_ask = to_outright(fd.get("PX_ASK"), s_ask or spot, kind, pip, lbl)
         fwd_mid = _mid(f_bid, f_ask)
         points = (fwd_mid - spot) * pip if (fwd_mid is not None and spot is not None) else None
         fwd_settle = fd.get("SETTLE_DT") if with_settle else None
@@ -436,39 +459,22 @@ def build_fx_all(client, pairs: List[str], tenors: List[str],
             if ccy != "USD":
                 needed.add(order_pair("USD", ccy))
 
+    # Every pair goes through the same candidate/fallback path.
     fx: Dict[str, Dict[str, FxPoint]] = {}
-    for p in sorted(needed):
+    for p in sorted(needed | set(crosses)):
         try:
-            fx[p] = build_fx_market(client, p, tenors, pip=pip)
+            fx[p] = build_fx_market(client, p, tenors, pip=pip,
+                                    overrides=cross_tickers)
         except Exception as e:   # one bad pair must not kill the whole run
             print(f"  ! {p}: fetch failed ({e})")
             fx[p] = {}
 
-    # Crosses: the VERIFIED "BASE/QUOTE TENOR Curncy" form is used by default
-    # (it resolved for every pair/tenor tested and always returns an outright).
-    # Anything in cross_tickers overrides it, hand-editable on the offline box.
-    from .tickers import cross_ticker, key as tkey
-
-    n_direct = 0
-    for p in crosses:
-        resolved = dict(cross_tickers or {})
-        resolved.setdefault(tkey(p), cross_ticker(p))
-        for t in tenors:
-            resolved.setdefault(tkey(p, t), cross_ticker(p, t))
-        try:
-            got = build_fx_from_tickers(client, p, tenors, resolved, pip=pip)
-        except Exception as e:
-            print(f"  ! {p}: cross fetch failed ({e}); will triangulate")
-            got = {}
-        if got:
-            fx.setdefault(p, {}).update(got)
-            n_direct += len(got)
-
+    n_direct = sum(len(v) for k, v in fx.items() if k in crosses)
     n_tri = triangulate(fx, crosses, tenors, pip=pip)
     if verbose:
-        print(f"FX: {len(needed)} USD pair(s) fetched"
-              + (f", {n_direct} cross pair-tenor(s) from resolved tickers" if n_direct else "")
-              + f", {n_tri} cross pair-tenor(s) triangulated")
+        got = sum(1 for p in needed for t in tenors if fx.get(p, {}).get(t))
+        print(f"FX: {got}/{len(needed)*len(tenors)} USD pair-tenor(s) fetched, "
+              f"{n_direct} cross fetched directly, {n_tri} triangulated")
     return fx
 
 

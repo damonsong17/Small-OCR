@@ -129,28 +129,43 @@ def cross_ticker(pair: str, tenor: Optional[str] = None) -> str:
 
 
 def candidates(pair: str, tenor: Optional[str] = None) -> List[str]:
-    """Candidate tickers, verified form first. Never raises."""
+    """Candidate tickers for ANY pair (USD or cross), best first. Never raises.
+
+    USD pairs get fallbacks too: '<other>+<tenor>' is confirmed for USDCNH but
+    is NOT universal, and with a single format a failed USD leg also breaks the
+    crosses that triangulate from it.
+    """
     base, quote = pair[:3], pair[3:]
+    other = quote if base == "USD" else base
+    is_usd = "USD" in (base, quote)
     out: List[str] = []
 
     def add(s):
         if s not in out:
             out.append(s)
 
-    add(cross_ticker(pair, tenor))            # VERIFIED, returns an outright
-
     if tenor is None:
-        add(f"{pair} Curncy")                 # also works for most crosses
+        add(f"{pair} Curncy")                     # USDCHF Curncy / EURCNH Curncy
+        add(cross_ticker(pair))                   # USD/CHF Curncy
         return out
 
+    if is_usd:
+        for tv in TENOR_ALIASES.get(tenor, [tenor]):
+            add(f"{other}+{tv} Curncy")           # CHF+1M  (confirmed for CNH)
+            add(cross_ticker(pair, tv))           # USD/CHF 1M (slash, universal)
+            add(f"{other}{tv} Curncy")            # CHF1M   -> points
+            add(f"{pair}{tv} Curncy")             # USDCHF1M -> points
+        return out
+
+    add(cross_ticker(pair, tenor))                # VERIFIED for crosses
     if (pair, tenor) in CONFIRMED_CROSS_FWD:
         add(CONFIRMED_CROSS_FWD[(pair, tenor)])   # observed (returns POINTS)
-
     cq, cb = code_of(quote), code_of(base)
     for tv in TENOR_ALIASES.get(tenor, [tenor]):
-        add(f"{pair}{tv} Curncy")             # EURCNH3M  -> points (erratic)
+        add(cross_ticker(pair, tv))
+        add(f"{pair}{tv} Curncy")                 # EURCNH3M -> points (erratic)
         if cq and cb:
-            add(f"{cq}{cb}{tv} Curncy")       # CGEU3M    -> points (erratic)
+            add(f"{cq}{cb}{tv} Curncy")           # CGEU3M   -> points (erratic)
     return out
 
 
