@@ -1,17 +1,23 @@
-"""FX ticker resolution: confirmed conventions + empirical discovery.
+"""FX ticker resolution built for an air-gapped machine.
 
-Bloomberg's cross-currency forward naming is not publicly documented and is not
-uniform (e.g. CHFHKD works for most tenors but 1Y shows as HDSF1Y; CHFCNH has no
-hover ticker at all yet BDP("CHF/CNH 3M Curncy",...) reportedly works). Rather
-than hardcode guesses, we:
+Design constraints (moving code between an online and an offline box is slow):
 
-  1. use the CONFIRMED convention for USD pairs,
-  2. try a list of CANDIDATE formats for crosses and record which one actually
-     returns data (``resolve``), persisting the result to a JSON overrides file,
-  3. fall back to triangulation from the USD legs when nothing resolves.
+  * NEVER hard-fail on an unknown ticker. Try many candidate formats, then fall
+    back to triangulation from the USD legs.
+  * NEVER silently swallow a missing quote -- every pair/tenor reports whether
+    it resolved, which ticker won, and what was tried.
+  * Everything is fixable ON THE OFFLINE BOX without a code change or a new
+    bundle: edit ``fx_tickers.json`` (plain JSON, any text editor) and rerun.
 
-Anything in the overrides file wins, so a ticker you verify by hand (such as
-HDSF1Y) can simply be pinned there.
+Discovered convention for non-USD cross forwards:
+
+    <2-letter code of QUOTE ccy><2-letter code of BASE ccy><tenor>
+
+    EURCNH -> CG+EU -> CGEU12M      HKDCNH -> CG+HD -> CGHD12M
+    EURHKD -> HD+EU -> HDEU12M      CHFHKD -> HD+SF -> HDSF1Y   (1Y, not 12M!)
+    EURCHF -> SF+EU -> SFEU12M
+
+The tenor suffix is inconsistent (12M vs 1Y), so both spellings are tried.
 """
 from __future__ import annotations
 
@@ -21,43 +27,63 @@ from typing import Dict, List, Optional
 
 OVERRIDES_FILE = "fx_tickers.json"
 
-# CONFIRMED on the terminal: these cross pairs quote spot under their plain
-# pair name. Only the FORWARD tenor format is uncertain for crosses, so spot is
-# taken directly and never probed.
+# Bloomberg 2-letter FX codes. EU/SF/HD/CG are confirmed from observed tickers;
+# the rest are the usual codes and are only ever used as CANDIDATES, so a wrong
+# guess costs nothing (it simply does not resolve and we triangulate instead).
+BBG_CCY_CODE = {
+    "EUR": "EU", "CHF": "SF", "HKD": "HD", "CNH": "CG",   # confirmed
+    "GBP": "BP", "JPY": "JY", "AUD": "AD", "CAD": "CD",   # conventional
+    "NZD": "ND", "SGD": "SD", "CNY": "CC", "SEK": "SK",
+    "NOK": "NK", "DKK": "DK", "TWD": "NT", "KRW": "KW",
+}
+
+# Alternative spellings of the same tenor, tried in order.
+TENOR_ALIASES = {
+    "1Y": ["12M", "1Y"],
+    "12M": ["12M", "1Y"],
+    "6M": ["6M"], "3M": ["3M"], "2M": ["2M"], "1M": ["1M"],
+    "2W": ["2W"], "1W": ["1W"], "3W": ["3W"],
+    "O/N": ["ON"], "T/N": ["TN"],
+}
+
+# CONFIRMED cross SPOT tickers (plain pair name).
 CONFIRMED_CROSS_SPOT = {
     "EURCHF": "EURCHF Curncy",
     "EURHKD": "EURHKD Curncy",
     "EURCNH": "EURCNH Curncy",
     "CHFHKD": "CHFHKD Curncy",
     "HKDCNH": "HKDCNH Curncy",
-    # CHFCNH shows no hover ticker; the Help Desk suggested the slash form,
-    # which the probe will confirm (see CROSS_SPOT_CANDIDATES).
+    # CHFCNH has no hover ticker; candidates below (incl. the slash form the
+    # Help Desk suggested) will settle it.
 }
 
-# Candidate formats for a CROSS forward outright, tried in order.
-# {pair}=EURCHF, {base}=EUR, {quote}=CHF, {tenor}=3M
-CROSS_FORWARD_CANDIDATES = [
-    "{pair}{tenor} Curncy",        # EURCHF3M Curncy
-    "{pair}+{tenor} Curncy",       # EURCHF+3M Curncy
-    "{base}/{quote} {tenor} Curncy",   # CHF/CNH 3M Curncy  (per Bloomberg Help Desk)
-    "{pair} {tenor} Curncy",       # EURCHF 3M Curncy
-]
+# CONFIRMED cross FORWARD tickers, observed on the terminal.
+CONFIRMED_CROSS_FWD = {
+    ("EURCNH", "1Y"): "CGEU12M Curncy",
+    ("EURHKD", "1Y"): "HDEU12M Curncy",
+    ("EURCHF", "1Y"): "SFEU12M Curncy",
+    ("HKDCNH", "1Y"): "CGHD12M Curncy",
+    ("CHFHKD", "1Y"): "HDSF1Y Curncy",
+}
 
-CROSS_SPOT_CANDIDATES = [
-    "{pair} Curncy",               # EURCHF Curncy
-    "{base}/{quote} Curncy",       # CHF/CNH Curncy
-]
+
+def code_of(ccy: str) -> Optional[str]:
+    return BBG_CCY_CODE.get(ccy.upper())
 
 
 def load_overrides(path: str = OVERRIDES_FILE) -> Dict[str, str]:
-    """Confirmed defaults, overlaid with anything resolved/pinned in the file."""
+    """Confirmed defaults, overlaid with whatever is in the JSON file.
+
+    The file is hand-editable on the offline machine -- fixing a ticker never
+    requires touching code or rebuilding the bundle.
+    """
     out = defaults()
     p = Path(path)
     if p.exists():
         try:
             out.update(json.loads(p.read_text(encoding="utf-8")))
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"  ! could not read {path} ({e}); using built-in defaults")
     return out
 
 
@@ -70,26 +96,49 @@ def key(pair: str, tenor: Optional[str] = None) -> str:
     return f"{pair}|{tenor}" if tenor else f"{pair}|SPOT"
 
 
-def candidates(pair: str, tenor: Optional[str] = None) -> List[str]:
-    base, quote = pair[:3], pair[3:]
-    if tenor is None and pair in CONFIRMED_CROSS_SPOT:
-        return [CONFIRMED_CROSS_SPOT[pair]]        # confirmed; no need to probe
-    fmts = CROSS_FORWARD_CANDIDATES if tenor else CROSS_SPOT_CANDIDATES
-    return [f.format(pair=pair, base=base, quote=quote, tenor=tenor) for f in fmts]
-
-
 def defaults() -> Dict[str, str]:
-    """Confirmed mappings available without any probing."""
-    return {key(p): sec for p, sec in CONFIRMED_CROSS_SPOT.items()}
+    out = {key(p): sec for p, sec in CONFIRMED_CROSS_SPOT.items()}
+    out.update({key(p, t): sec for (p, t), sec in CONFIRMED_CROSS_FWD.items()})
+    return out
+
+
+def candidates(pair: str, tenor: Optional[str] = None) -> List[str]:
+    """Candidate tickers, most likely first. Never raises; always returns some."""
+    base, quote = pair[:3], pair[3:]
+    out: List[str] = []
+
+    def add(s):
+        if s not in out:
+            out.append(s)
+
+    if tenor is None:
+        if pair in CONFIRMED_CROSS_SPOT:
+            add(CONFIRMED_CROSS_SPOT[pair])
+        add(f"{pair} Curncy")
+        add(f"{base}/{quote} Curncy")
+        return out
+
+    if (pair, tenor) in CONFIRMED_CROSS_FWD:
+        add(CONFIRMED_CROSS_FWD[(pair, tenor)])
+
+    cq, cb = code_of(quote), code_of(base)
+    for tv in TENOR_ALIASES.get(tenor, [tenor]):
+        if cq and cb:
+            add(f"{cq}{cb}{tv} Curncy")       # discovered pattern: CGEU12M
+        add(f"{pair}{tv} Curncy")             # EURCNH12M
+        add(f"{pair}+{tv} Curncy")            # EURCNH+12M
+        add(f"{base}/{quote} {tv} Curncy")    # CHF/CNH 3M  (Help Desk form)
+        add(f"{pair} {tv} Curncy")            # EURCNH 12M
+    return out
 
 
 def resolve(client, pairs: List[str], tenors: List[str],
             overrides: Optional[Dict[str, str]] = None,
             fields=("PX_BID", "PX_ASK"), verbose: bool = True) -> Dict[str, str]:
-    """Probe candidate tickers for each cross pair/tenor; return what works.
+    """Probe candidates and keep whatever returns a price.
 
-    Only securities that come back with an actual price are accepted. The
-    returned mapping is keyed 'PAIR|TENOR' (and 'PAIR|SPOT').
+    Everything is requested in ONE batch. Unresolved entries are reported with
+    the candidates that were tried, so nothing disappears quietly.
     """
     found: Dict[str, str] = dict(overrides or {})
     probes: Dict[str, List[str]] = {}
@@ -100,11 +149,21 @@ def resolve(client, pairs: List[str], tenors: List[str],
             if key(pair, t) not in found:
                 probes[key(pair, t)] = candidates(pair, t)
     if not probes:
+        if verbose:
+            print("  all tickers already known (defaults/overrides)")
         return found
 
     all_secs = sorted({s for lst in probes.values() for s in lst})
-    data = client.reference(all_secs, list(fields))
+    if verbose:
+        print(f"  probing {len(all_secs)} candidate ticker(s) "
+              f"for {len(probes)} pair-tenor(s) ...")
+    try:
+        data = client.reference(all_secs, list(fields))
+    except Exception as e:                      # never let a probe break the run
+        print(f"  ! probe request failed ({e}); everything will triangulate")
+        return found
 
+    unresolved = []
     for k, cands in probes.items():
         for sec in cands:
             rec = data.get(sec) or {}
@@ -113,9 +172,13 @@ def resolve(client, pairs: List[str], tenors: List[str],
             if rec.get("PX_BID") is not None or rec.get("PX_ASK") is not None:
                 found[k] = sec
                 if verbose:
-                    print(f"  resolved {k:16} -> {sec}")
+                    print(f"    OK  {k:16} -> {sec}")
                 break
         else:
-            if verbose:
-                print(f"  unresolved {k:16} (will triangulate)")
+            unresolved.append((k, cands))
+
+    if unresolved and verbose:
+        print(f"\n  {len(unresolved)} unresolved (will triangulate from USD legs):")
+        for k, cands in unresolved:
+            print(f"    --  {k:16} tried: {', '.join(c.replace(' Curncy','') for c in cands)}")
     return found

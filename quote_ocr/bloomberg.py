@@ -390,12 +390,20 @@ def build_fx_all(client, pairs: List[str], tenors: List[str],
 
     fx: Dict[str, Dict[str, FxPoint]] = {}
     for p in sorted(needed):
-        fx[p] = build_fx_market(client, p, tenors, pip=pip)
+        try:
+            fx[p] = build_fx_market(client, p, tenors, pip=pip)
+        except Exception as e:   # one bad pair must not kill the whole run
+            print(f"  ! {p}: fetch failed ({e})")
+            fx[p] = {}
 
     n_direct = 0
     if cross_tickers:
         for p in crosses:
-            got = build_fx_from_tickers(client, p, tenors, cross_tickers, pip=pip)
+            try:
+                got = build_fx_from_tickers(client, p, tenors, cross_tickers, pip=pip)
+            except Exception as e:
+                print(f"  ! {p}: cross fetch failed ({e}); will triangulate")
+                got = {}
             if got:
                 fx.setdefault(p, {}).update(got)
                 n_direct += len(got)

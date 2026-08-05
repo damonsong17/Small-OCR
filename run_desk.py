@@ -110,14 +110,28 @@ def main(argv=None):
 
 
 def _fx_coverage(fx, pairs, tenors):
-    missing = [f"{pr} {t}" for pr in pairs for t in tenors
+    """Report coverage explicitly -- a missing quote is never swallowed."""
+    from quote_ocr import tickers as tk
+    missing = [(pr, t) for pr in pairs for t in tenors
                if (fx.get(pr, {}).get(t) is None
                    or fx[pr][t].spot is None or fx[pr][t].points is None)]
-    have = len(pairs) * len(tenors) - len(missing)
-    print(f"FX coverage: {have}/{len(pairs)*len(tenors)} pair-tenors")
+    total = len(pairs) * len(tenors)
+    print(f"FX coverage: {total - len(missing)}/{total} pair-tenors")
     if missing:
-        print(f"  missing: {', '.join(missing[:12])}"
-              f"{' ...' if len(missing) > 12 else ''}")
+        from quote_ocr.bloomberg import FX_TICKERS, TENOR_CODE, _fwd_key, is_usd_pair
+        print("  MISSING (no direct ticker and USD legs unavailable):")
+        for pr, t in missing[:15]:
+            if is_usd_pair(pr):
+                cands = FX_TICKERS["outright"].format(
+                    fwd=_fwd_key(pr), tenor=TENOR_CODE.get(t, t)).replace(" Curncy", "")
+            else:
+                cands = ", ".join(c.replace(" Curncy", "")
+                                  for c in tk.candidates(pr, t)[:4])
+            print(f"    {pr} {t:4} -- tried: {cands}")
+        if len(missing) > 15:
+            print(f"    ... {len(missing)-15} more")
+        print("  Fix without rebuilding: add the correct ticker to "
+              "fx_tickers.json as \"PAIR|TENOR\": \"TICKER Curncy\" and rerun.")
     print()
 
 
