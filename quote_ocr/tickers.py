@@ -9,15 +9,17 @@ Design constraints (moving code between an online and an offline box is slow):
   * Everything is fixable ON THE OFFLINE BOX without a code change or a new
     bundle: edit ``fx_tickers.json`` (plain JSON, any text editor) and rerun.
 
-Discovered convention for non-USD cross forwards:
+OBSERVED on the terminal (hover), and nothing beyond it is assumed:
 
-    <2-letter code of QUOTE ccy><2-letter code of BASE ccy><tenor>
+  * cross pairs use their PLAIN pair name for spot and for the ordinary tenors
+    (EURCNH stays EURCNH);
+  * ONLY the 12M point is special, using a 2-letter-code form:
+        EURCNH -> CGEU12M   EURHKD -> HDEU12M   EURCHF -> SFEU12M
+        HKDCNH -> CGHD12M   CHFHKD -> HDSF1Y    (1Y, not 12M)
 
-    EURCNH -> CG+EU -> CGEU12M      HKDCNH -> CG+HD -> CGHD12M
-    EURHKD -> HD+EU -> HDEU12M      CHFHKD -> HD+SF -> HDSF1Y   (1Y, not 12M!)
-    EURCHF -> SF+EU -> SFEU12M
-
-The tenor suffix is inconsistent (12M vs 1Y), so both spellings are tried.
+Those five are stored verbatim. The 2-letter-code form is NOT extrapolated to
+other tenors -- for 1M/3M/6M the plain pair name is tried first, and the code
+form is kept only as a last-resort fallback that costs nothing if wrong.
 """
 from __future__ import annotations
 
@@ -119,16 +121,24 @@ def candidates(pair: str, tenor: Optional[str] = None) -> List[str]:
         return out
 
     if (pair, tenor) in CONFIRMED_CROSS_FWD:
-        add(CONFIRMED_CROSS_FWD[(pair, tenor)])
+        add(CONFIRMED_CROSS_FWD[(pair, tenor)])   # observed verbatim
 
     cq, cb = code_of(quote), code_of(base)
+    is_year = tenor.upper() in ("1Y", "12M")
+
     for tv in TENOR_ALIASES.get(tenor, [tenor]):
-        if cq and cb:
-            add(f"{cq}{cb}{tv} Curncy")       # discovered pattern: CGEU12M
-        add(f"{pair}{tv} Curncy")             # EURCNH12M
-        add(f"{pair}+{tv} Curncy")            # EURCNH+12M
-        add(f"{base}/{quote} {tv} Curncy")    # CHF/CNH 3M  (Help Desk form)
-        add(f"{pair} {tv} Curncy")            # EURCNH 12M
+        # OBSERVED: only the 12M point uses the 2-letter-code form, so it leads
+        # for year tenors only. For every other tenor the plain pair name is
+        # what the terminal shows, so that goes first.
+        if is_year and cq and cb:
+            add(f"{cq}{cb}{tv} Curncy")
+        add(f"{pair}{tv} Curncy")             # EURCNH3M   (plain pair, observed)
+        add(f"{pair}+{tv} Curncy")            # EURCNH+3M
+        add(f"{base}/{quote} {tv} Curncy")    # CHF/CNH 3M (Help Desk form)
+        add(f"{pair} {tv} Curncy")            # EURCNH 3M
+        # last-resort only; NOT an observed convention for non-year tenors
+        if not is_year and cq and cb:
+            add(f"{cq}{cb}{tv} Curncy")
     return out
 
 
