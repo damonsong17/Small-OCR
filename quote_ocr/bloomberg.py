@@ -180,9 +180,10 @@ class FxPoint:
 QUOTE_ORDER = ["EUR", "GBP", "AUD", "NZD", "USD", "CAD", "CHF", "HKD", "CNH",
                "CNY", "SGD", "JPY"]
 
-# Pair names verified on the terminal, overriding the ranking above.
-# Confirmed: EURCHF, EURHKD, EURCNH, CHFHKD, CHFCNH, HKDCNH (note HKD before
-# CNH, which the generic ranking would otherwise get wrong).
+# Canonical pair direction. NOTE both directions usually exist on Bloomberg
+# (CNH/HKD 1M and HKD/CNH 1M both quote, as reciprocals), so this is about
+# picking ONE direction and using it consistently everywhere -- not about which
+# ticker exists. Names here match what was seen on the terminal.
 PAIR_OVERRIDES = {
     frozenset({"HKD", "CNH"}): "HKDCNH",
     frozenset({"EUR", "CHF"}): "EURCHF",
