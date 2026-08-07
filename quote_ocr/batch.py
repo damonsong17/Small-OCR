@@ -47,21 +47,31 @@ def _quotes_from_docx(path: str):
     surf, meta = parse_docx(path, verbose=False)
     ref_only = {c.upper() for c in meta.get("reference_only", [])}
     out = []
+    def _pct(v):
+        return "" if v is None else f"{v*100:.6f}".rstrip("0").rstrip(".")
+
     for ccy, sides in surf.items():
-        tenors = set(sides.get("bid", {})) | set(sides.get("offer", {}))
+        # A one-sided reference rate has no bid/offer, so it must be carried by
+        # its own 'mid' tenors -- leaving them out would drop the whole internal
+        # money-market email from the database.
+        tenors = (set(sides.get("bid", {})) | set(sides.get("offer", {}))
+                  | set(sides.get("mid", {})))
         for t in tenors:
-            b = sides.get("bid", {}).get(t)
-            o = sides.get("offer", {}).get(t)
             out.append(Quote(
                 currency=ccy, tenor=t,
-                bid="" if b is None else f"{b*100:.6f}".rstrip("0").rstrip("."),
-                offer="" if o is None else f"{o*100:.6f}".rstrip("0").rstrip("."),
-                # provenance the desk must see: settlement basis, and whether
-                # this is a one-sided reference rate rather than a two-way price
-                segment=("reference" if ccy in ref_only else ""),
+                bid=_pct(sides.get("bid", {}).get(t)),
+                offer=_pct(sides.get("offer", {}).get(t)),
+                mid=_pct(sides.get("mid", {}).get(t)),
+                # 'segment' is the COUNTERPARTY group and drives the KYC access
+                # check, so the reference-rate marker must not live there -- an
+                # internal email has no counterparty segment, and writing one
+                # would get the whole channel excluded as an unknown desk.
+                # The populated 'mid' column already says it is one-sided.
+                segment="",
                 benchmark=meta.get("settle", ""),
                 source_file=Path(path).name, page=1, confidence=1.0,
-                raw=f"docx {meta.get('settle','')}"))
+                raw=f"docx {meta.get('settle','')}"
+                    + (" reference-only" if ccy in ref_only else "")))
     return out
 
 
@@ -91,7 +101,16 @@ def ingest(
     if make_xlsx:
         xlsx_dir.mkdir(parents=True, exist_ok=True)
 
-    pipeline = QuotePipeline(config or Config())
+    # Built on first image, not up front: a folder holding only .docx rate
+    # emails needs no OCR engine at all, and eager construction would download
+    # (or fail to find) the models for nothing -- fatal on the offline machine.
+    _pipeline = []
+
+    def pipeline():
+        if not _pipeline:
+            _pipeline.append(QuotePipeline(config or Config()))
+        return _pipeline[0]
+
     summary = {"processed": 0, "skipped": 0, "unnamed": 0, "quotes": 0}
 
     xlsx_build = None
@@ -141,7 +160,7 @@ def ingest(
                 # Internal rate emails: real tables, parsed exactly (no OCR).
                 quotes = _quotes_from_docx(str(path))
             else:
-                quotes = pipeline.run_file(str(path), supplier=source)
+                quotes = pipeline().run_file(str(path), supplier=source)
             for q in quotes:
                 q.date = date        # authoritative date from the filename
                 q.supplier = source  # the quotation source

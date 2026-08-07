@@ -32,7 +32,13 @@ def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--db", default=None, help="quotes.db with channel funding rates.")
     p.add_argument("--date", default=None, help="Quote date, e.g. 2026-07-16.")
-    p.add_argument("--channel", default="AFS", help="Channel/source name (pilot: AFS).")
+    p.add_argument("--source", default="",
+                   help="Restrict to ONE source in the store (AFS, MM, MP). "
+                        "Default: every source, combined best-of. Use "
+                        "run_desk.py to find arbitrage BETWEEN sources.")
+    p.add_argument("--channel", default="",
+                   help="Label for the report. Defaults to the sources actually "
+                        "used, so the heading can never name the wrong desk.")
     p.add_argument("--pairs", default="", help="FX pairs to check (explicit).")
     p.add_argument("--ccy", default="USD,CNH,CHF,EUR,HKD",
                    help="Currencies; all pair combinations are checked "
@@ -55,13 +61,38 @@ def main(argv=None):
     print(f"pairs: {', '.join(pairs)}")
 
     # 1) channel funding surface (from OCR store, or demo)
+    label = args.channel
     if args.db and args.date:
+        from quote_ocr import sources as _src
         from quote_ocr.store import QuoteStore
         with QuoteStore(args.db) as store:
-            surface = arb.surface_from_store(store, args.date, currencies)
+            used = [args.source] if args.source else store.sources(args.date)
+            # Per source, then an explicit best-of merge (lowest offer, highest
+            # bid). Loading every source into one surface would let whichever
+            # row happened to be read last win, which is not a price anyone
+            # quoted. run_desk.py keeps them separate to trade BETWEEN sources.
+            per_source = [_src.surface_from_store(store, args.date, currencies,
+                                                  source=s) for s in used]
+            surface = _src.merge_surfaces(*per_source) if per_source else {}
+            for s, surf in zip(used, per_source):
+                for ccy, sides in surf.items():
+                    if sides.get("mid"):
+                        surface.setdefault(ccy, {"bid": {}, "offer": {}}) \
+                               .setdefault("mid", {}).update(sides["mid"])
+        # A store now holds AFS, MM and MP together, so the heading must state
+        # which sources are actually in the surface rather than assume AFS.
+        label = label or "+".join(used) or "(empty)"
+        # One-sided reference rates are not executable; widen them explicitly
+        # so they are visible here rather than silently absent.
+        surface, ind = _src.apply_reference_sides(surface)
+        if ind:
+            print(f"  note: {', '.join(sorted({c for c, _, _ in ind}))} include "
+                  f"one-sided reference rates -- routes using them are indicative")
     else:
         print("(no --db/--date; using demo funding surface)")
         surface = DEMO_SURFACE
+        ind = set()
+        label = label or "demo"
 
     if args.tenors.strip().lower() == "auto":
         from quote_ocr import sources as _src
@@ -83,9 +114,10 @@ def main(argv=None):
 
     # 3) scan the channel surface for cross-currency arbitrage
     opps = arb.scan_surface_noarb(surface, fx, pairs, tenors,
-                                  channel=args.channel, threshold_bps=args.threshold,
-                                  allow_mismatch=not args.no_mismatch)
-    _report(args.channel, opps)
+                                  channel=label, threshold_bps=args.threshold,
+                                  allow_mismatch=not args.no_mismatch,
+                                  indicative=ind)
+    _report(label, opps)
 
 
 def _report(channel, opps):
@@ -94,12 +126,24 @@ def _report(channel, opps):
     if not opps:
         print("  none above threshold.")
         return
-    cols = [("pair", 8), ("pnl_bps", 9), ("risk_type", 40), ("detail", 86)]
+    cols = [("pair", 8), ("pnl_bps", 9), ("flags", 12), ("risk_type", 40),
+            ("detail", 86)]
     print("  ".join(h.ljust(w) for h, w in cols))
-    print("-" * 120)
+    print("-" * 132)
+    n_ind = 0
     for o in sorted(opps, key=lambda x: -x.pnl_bps):
         d = o.as_row()
+        flags = []
+        if d["indicative"]:
+            flags.append("INDIC")
+            n_ind += 1
+        if d["mismatch"]:
+            flags.append("MISMATCH")
+        d["flags"] = "/".join(flags)
         print("  ".join(str(d[h]).ljust(w) for h, w in cols))
+    if n_ind:
+        print(f"\n  INDIC = a leg came from a one-sided reference rate, not a "
+              f"two-way price. Confirm the real quote before trading.")
 
 
 if __name__ == "__main__":

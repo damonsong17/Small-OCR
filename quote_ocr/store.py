@@ -18,7 +18,7 @@ _SCHEMA = """
 CREATE TABLE IF NOT EXISTS quotes (
     source TEXT, date TEXT, segment TEXT, currency TEXT,
     benchmark TEXT, benchmark_rate TEXT, tenor TEXT,
-    bid TEXT, offer TEXT, confidence REAL,
+    bid TEXT, offer TEXT, mid TEXT, confidence REAL,
     source_file TEXT, page INTEGER, raw TEXT, ingested_at TEXT
 );
 CREATE TABLE IF NOT EXISTS files (
@@ -31,9 +31,14 @@ CREATE INDEX IF NOT EXISTS ix_quotes_slice ON quotes(date, currency, tenor);
 
 _COLS = [
     "source", "date", "segment", "currency", "benchmark", "benchmark_rate",
-    "tenor", "bid", "offer", "confidence", "source_file", "page", "raw",
+    "tenor", "bid", "offer", "mid", "confidence", "source_file", "page", "raw",
     "ingested_at",
 ]
+
+# Columns added after the first release. A database already sitting on the
+# offline machine must keep working without being rebuilt, so missing columns
+# are added in place instead of requiring a fresh ingest.
+_ADDED_COLS = {"mid": "TEXT"}
 
 
 def sha1_of(path: str) -> str:
@@ -56,7 +61,15 @@ class QuoteStore:
         self.conn = sqlite3.connect(path)
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(_SCHEMA)
+        self._migrate()
         self.conn.commit()
+
+    def _migrate(self) -> None:
+        have = {r["name"] for r in self.conn.execute("PRAGMA table_info(quotes)")}
+        for col, decl in _ADDED_COLS.items():
+            if col not in have:
+                self.conn.execute(f"ALTER TABLE quotes ADD COLUMN {col} {decl}")
+                print(f"  (quotes.db: added missing column '{col}')")
 
     def close(self) -> None:
         self.conn.close()
@@ -94,8 +107,8 @@ class QuoteStore:
             [
                 (
                     source, date, q.segment, q.currency, q.benchmark, q.benchmark_rate,
-                    q.tenor, q.bid, q.offer, q.confidence, q.source_file, q.page, q.raw,
-                    now,
+                    q.tenor, q.bid, q.offer, getattr(q, "mid", ""), q.confidence,
+                    q.source_file, q.page, q.raw, now,
                 )
                 for q in quotes
             ],
@@ -103,13 +116,25 @@ class QuoteStore:
         self.conn.commit()
 
     # -- read helpers (for pricing / reporting) ----------------------------
-    def by_currency(self, date: str, currency: str) -> List[sqlite3.Row]:
-        """All sources' quotes for one currency on one date (for pricing)."""
-        return self.conn.execute(
-            "SELECT source, segment, tenor, bid, offer, benchmark, benchmark_rate "
-            "FROM quotes WHERE date = ? AND currency = ? ORDER BY tenor, source",
-            (date, currency),
-        ).fetchall()
+    def by_currency(self, date: str, currency: str,
+                    source: str = None) -> List[sqlite3.Row]:
+        """Quotes for one currency on one date, optionally from one source."""
+        sql = ("SELECT source, segment, tenor, bid, offer, mid, benchmark, "
+               "benchmark_rate FROM quotes WHERE date = ? AND currency = ?")
+        args = [date, currency]
+        if source:
+            sql += " AND source = ?"
+            args.append(source)
+        return self.conn.execute(sql + " ORDER BY tenor, source", args).fetchall()
+
+    def sources(self, date: str = None) -> List[str]:
+        """Distinct quote sources, optionally for one date."""
+        sql = "SELECT DISTINCT source FROM quotes"
+        args = ()
+        if date:
+            sql += " WHERE date = ?"
+            args = (date,)
+        return [r["source"] for r in self.conn.execute(sql + " ORDER BY source", args)]
 
     def dates(self) -> List[str]:
         return [

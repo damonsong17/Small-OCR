@@ -32,8 +32,11 @@ NO_KYC_SEGMENTS = {
 }
 
 # Segments we DO have access to. Blank means the source has no segment concept
-# (a text/manual channel), which is fine.
-TRADEABLE_SEGMENTS = {"", "chinese"}
+# (a text/manual channel, or an internal rate email), which is fine.
+# "reference" / "internal" are not counterparties at all -- they are markers an
+# earlier version wrote into this field, and they must not be mistaken for an
+# unknown desk and silently excluded from a database already on the machine.
+TRADEABLE_SEGMENTS = {"", "chinese", "reference", "internal"}
 
 # What to do with a segment that is in neither list (a new source, a new desk).
 # "exclude" is the safe default -- an unknown counterparty is assumed to have no
@@ -144,12 +147,15 @@ def empty_surface() -> Dict:
     return {}
 
 
-def _put(surface: Dict, ccy: str, tenor: str, bid, offer) -> None:
-    e = surface.setdefault(ccy.upper(), {"bid": {}, "offer": {}})
+def _put(surface: Dict, ccy: str, tenor: str, bid, offer, mid=None) -> None:
+    e = surface.setdefault(ccy.upper(), {"bid": {}, "offer": {}, "mid": {}})
+    e.setdefault("mid", {})
     if bid is not None:
         e["bid"][tenor] = bid
     if offer is not None:
         e["offer"][tenor] = offer
+    if mid is not None:
+        e["mid"][tenor] = mid
 
 
 def _num(x) -> Optional[float]:
@@ -165,6 +171,7 @@ def surface_from_store(
     exclude_segments: Optional[set] = None,
     whitelist: bool = True,
     verbose: bool = True,
+    source: str = None,
 ) -> Dict:
     """Build a surface from the OCR store, using only tradeable segments.
 
@@ -175,7 +182,7 @@ def surface_from_store(
     kept: Dict[str, int] = {}
     dropped: Dict[str, int] = {}
     for ccy in currencies:
-        for r in store.by_currency(date, ccy):
+        for r in store.by_currency(date, ccy, source=source):
             seg = (r["segment"] or "").strip()
             if exclude_segments is not None:
                 use = _norm(seg) not in {_norm(s) for s in exclude_segments}
@@ -187,16 +194,19 @@ def surface_from_store(
                 continue
             kept[label] = kept.get(label, 0) + 1
             bid, offer = _num(r["bid"]), _num(r["offer"])
+            mid = _num(r["mid"]) if "mid" in r.keys() else None
             _put(surface, ccy, r["tenor"],
                  bid / 100.0 if bid is not None else None,
-                 offer / 100.0 if offer is not None else None)
+                 offer / 100.0 if offer is not None else None,
+                 mid / 100.0 if mid is not None else None)
     if verbose:
+        who = f"[{source}] " if source else ""
         if kept:
-            print("  counterparties USED:     "
+            print(f"  {who}counterparties USED:     "
                   + ", ".join(f"{k} ({n})" for k, n in sorted(kept.items())))
         for label, n in sorted(dropped.items()):
             why = reason(None if label == "(none)" else label)
-            print(f"  counterparty EXCLUDED:   {label} ({n} rows) -- {why}")
+            print(f"  {who}counterparty EXCLUDED:   {label} ({n} rows) -- {why}")
         unknown = [k for k in dropped if access_status(k) == "unknown"]
         if unknown:
             print(f"  -> to trade any of these, add it to \"tradeable\" in "
@@ -303,7 +313,7 @@ def tenors_in(surface: Dict) -> List[str]:
     """
     found = set()
     for sides in surface.values():
-        for side in ("bid", "offer"):
+        for side in ("bid", "offer", "mid"):
             found.update(sides.get(side, {}))
     rank = {t: i for i, t in enumerate(_TENOR_ORDER)}
     return sorted(found, key=lambda t: (rank.get(t.upper(), 99), t))
@@ -319,4 +329,46 @@ def merge_surfaces(*surfaces: Dict) -> Dict:
                 e["bid"][t] = max(e["bid"].get(t, float("-inf")), v)
             for t, v in sides.get("offer", {}).items():
                 e["offer"][t] = min(e["offer"].get(t, float("inf")), v)
+    return out
+
+
+# --- one-sided reference rates ------------------------------------------------
+def apply_reference_sides(surface: Dict, half_spread_bps: float = 0.0):
+    """Make single-sided reference rates ('mid') usable, visibly and reversibly.
+
+    The internal money-market email quotes ONE rate per currency, not a two-way
+    price. It is stored under ``mid`` so it can never masquerade as an
+    executable bid/offer. But the desk still wants to know when the internal
+    book looks arbitrageable against AFS, so this fills the missing sides from
+    the mid at an ASSUMED half spread and returns the keys it invented.
+
+    Returns ``(surface, indicative)`` where ``indicative`` is a set of
+    ``(ccy, side, tenor)`` -- every opportunity touching one of those is flagged
+    INDICATIVE rather than presented as a firm trade. A genuine quoted side is
+    never overwritten.
+    """
+    hs = half_spread_bps / 1e4
+    out: Dict = {}
+    indicative = set()
+    for ccy, sides in surface.items():
+        e = {"bid": dict(sides.get("bid", {})),
+             "offer": dict(sides.get("offer", {})),
+             "mid": dict(sides.get("mid", {}))}
+        for t, v in e["mid"].items():
+            if t not in e["bid"]:
+                e["bid"][t] = v - hs
+                indicative.add((ccy.upper(), "bid", t))
+            if t not in e["offer"]:
+                e["offer"][t] = v + hs
+                indicative.add((ccy.upper(), "offer", t))
+        out[ccy] = e
+    return out, indicative
+
+
+def describe_reference(surface: Dict) -> List[str]:
+    """Currencies in this surface that are reference-only (mid, no two-way)."""
+    out = []
+    for ccy, sides in sorted(surface.items()):
+        if sides.get("mid") and not sides.get("bid") and not sides.get("offer"):
+            out.append(ccy)
     return out

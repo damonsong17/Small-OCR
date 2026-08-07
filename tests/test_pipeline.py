@@ -16,7 +16,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from quote_ocr import sources                        # noqa: E402
-from quote_ocr.arb import scan_surface_noarb         # noqa: E402
+from quote_ocr.arb import (                          # noqa: E402
+    _is_ind,
+    scan_across_channels,
+    scan_surface_noarb,
+)
 from quote_ocr.bloomberg import (                    # noqa: E402
     FxPoint, all_pairs, order_pair, pip_of, quote_kind, to_outright,
 )
@@ -172,6 +176,97 @@ class TestArbScan(unittest.TestCase):
                                   threshold_bps=1.0, allow_mismatch=False)
         self.assertFalse([o for o in opps if o.mismatch])
 
+    def test_indicative_leg_is_flagged(self):
+        surf = {"USD": {"bid": {"3M": 0.0800}, "offer": {"3M": 0.0810}},
+                "CNH": {"bid": {"3M": 0.0100}, "offer": {"3M": 0.0110}}}
+        # the profitable route here is borrow CNH -> swap -> lend USD, so mark
+        # the CNH borrowing side as the one derived from a reference rate
+        opps = scan_surface_noarb(surf, self.fx, ["USDCNH"], ["3M"],
+                                  threshold_bps=1.0, allow_mismatch=False,
+                                  indicative={("CNH", "offer", "3M")})
+        used = [o for o in opps if o.borrow_ccy == "CNH"]
+        self.assertTrue(used)
+        self.assertTrue(all(o.indicative for o in used))
+        self.assertIn("INDICATIVE", used[0].detail)
+        # a route that does not touch the reference rate stays firm
+        clean = [o for o in opps if o.borrow_ccy == "USD"]
+        self.assertFalse([o for o in clean if o.indicative])
+
+    def test_indicative_flag_survives_1y_12m_spelling(self):
+        # the flag must not be lost because the surface says 1Y and the key 12M
+        self.assertTrue(_is_ind({("USD", "offer", "12M")}, "USD", "offer", "1Y"))
+        self.assertFalse(_is_ind({("USD", "bid", "12M")}, "USD", "offer", "1Y"))
+
+
+class TestCrossChannelArb(unittest.TestCase):
+    """Borrow from one source, lend to another -- merging surfaces hides this."""
+
+    def setUp(self):
+        self.fx = {"USDCNH": {"3M": _fx(7.1850, 7.1500)}}
+
+    def test_cheap_internal_expensive_afs(self):
+        channels = {
+            "MP":  {"USD": {"bid": {"3M": 0.0380}, "offer": {"3M": 0.0390}}},
+            "AFS": {"USD": {"bid": {"3M": 0.0410}, "offer": {"3M": 0.0420}}},
+        }
+        opps = scan_across_channels(channels, self.fx, ["USDCNH"], ["3M"],
+                                    threshold_bps=1.0, allow_mismatch=False)
+        same = [o for o in opps if o.kind == "cross_channel_same_ccy"]
+        self.assertTrue(same)
+        o = same[0]
+        self.assertEqual((o.borrow_channel, o.lend_channel), ("MP", "AFS"))
+        self.assertAlmostEqual(o.pnl_bps, 20.0, places=2)   # 4.10 bid - 3.90 offer
+        self.assertIn("@MP", o.legs())
+        self.assertIn("@AFS", o.legs())
+
+    def test_merging_would_have_hidden_it(self):
+        channels = {
+            "MP":  {"USD": {"bid": {"3M": 0.0380}, "offer": {"3M": 0.0390}}},
+            "AFS": {"USD": {"bid": {"3M": 0.0410}, "offer": {"3M": 0.0420}}},
+        }
+        merged = sources.merge_surfaces(*channels.values())
+        # best-of keeps offer 3.90 and bid 4.10 in ONE surface, which the
+        # single-surface scan has no way to express as a trade between sources
+        self.assertAlmostEqual(merged["USD"]["offer"]["3M"], 0.0390)
+        self.assertAlmostEqual(merged["USD"]["bid"]["3M"], 0.0410)
+
+    def test_reference_only_channel_is_flagged_indicative(self):
+        mm = {"USD": {"bid": {}, "offer": {}, "mid": {"3M": 0.0380}}}
+        widened, ind = sources.apply_reference_sides(mm, half_spread_bps=0.0)
+        channels = {
+            "MM": widened,
+            "AFS": {"USD": {"bid": {"3M": 0.0410}, "offer": {"3M": 0.0420}}},
+        }
+        opps = scan_across_channels(channels, self.fx, ["USDCNH"], ["3M"],
+                                    threshold_bps=1.0, allow_mismatch=False,
+                                    indicative={"MM": ind})
+        same = [o for o in opps if o.kind == "cross_channel_same_ccy"]
+        self.assertTrue(same)
+        self.assertTrue(same[0].indicative)
+        self.assertIn("INDICATIVE", same[0].detail)
+
+
+class TestReferenceSides(unittest.TestCase):
+    def test_mid_never_becomes_a_free_two_way_price(self):
+        surf = {"USD": {"bid": {}, "offer": {}, "mid": {"3M": 0.0400}}}
+        out, ind = sources.apply_reference_sides(surf, half_spread_bps=5.0)
+        self.assertAlmostEqual(out["USD"]["bid"]["3M"], 0.0400 - 0.0005)
+        self.assertAlmostEqual(out["USD"]["offer"]["3M"], 0.0400 + 0.0005)
+        self.assertEqual(ind, {("USD", "bid", "3M"), ("USD", "offer", "3M")})
+
+    def test_a_real_quoted_side_is_never_overwritten(self):
+        surf = {"USD": {"bid": {"3M": 0.0390}, "offer": {}, "mid": {"3M": 0.0400}}}
+        out, ind = sources.apply_reference_sides(surf, half_spread_bps=5.0)
+        self.assertAlmostEqual(out["USD"]["bid"]["3M"], 0.0390)   # firm side kept
+        self.assertNotIn(("USD", "bid", "3M"), ind)
+        self.assertIn(("USD", "offer", "3M"), ind)
+
+    def test_source_surface_is_not_mutated(self):
+        surf = {"USD": {"bid": {}, "offer": {}, "mid": {"3M": 0.0400}}}
+        sources.apply_reference_sides(surf, half_spread_bps=5.0)
+        self.assertEqual(surf["USD"]["bid"], {})
+        self.assertEqual(surf["USD"]["offer"], {})
+
 
 # --------------------------------------------------------------------------
 DOCX_XML = """<?xml version="1.0"?>
@@ -192,6 +287,49 @@ def _make_docx(path, rows):
         z.writestr("word/document.xml", xml)
 
 
+class TestStoreRoundTrip(unittest.TestCase):
+    """A one-sided rate must survive the database, not vanish on the way in."""
+
+    def setUp(self):
+        self.db = Path("_test_tmp.db")
+        if self.db.exists():
+            os.remove(self.db)
+
+    def tearDown(self):
+        if self.db.exists():
+            os.remove(self.db)
+
+    def test_mid_only_quote_survives_the_store(self):
+        from quote_ocr.models import Quote
+        from quote_ocr.store import QuoteStore
+        rows = [Quote(currency="USD", tenor="3M", mid="3.85", date="2026-08-07")]
+        with QuoteStore(str(self.db)) as s:
+            s.replace_quotes("MM", "2026-08-07", rows)
+            surf = sources.surface_from_store(
+                s, "2026-08-07", ["USD"], verbose=False, source="MM")
+        self.assertAlmostEqual(surf["USD"]["mid"]["3M"], 0.0385)
+        self.assertEqual(surf["USD"]["bid"], {})     # never invented on the way in
+        self.assertEqual(surf["USD"]["offer"], {})
+
+    def test_old_database_without_the_mid_column_is_migrated(self):
+        import sqlite3
+        from quote_ocr.store import QuoteStore
+        # a database written by the previous release: no 'mid' column at all
+        conn = sqlite3.connect(self.db)
+        conn.execute("CREATE TABLE quotes (source TEXT, date TEXT, segment TEXT, "
+                     "currency TEXT, benchmark TEXT, benchmark_rate TEXT, "
+                     "tenor TEXT, bid TEXT, offer TEXT, confidence REAL, "
+                     "source_file TEXT, page INTEGER, raw TEXT, ingested_at TEXT)")
+        conn.execute("INSERT INTO quotes(source, date, currency, tenor, bid, offer) "
+                     "VALUES ('AFS','2026-08-07','USD','3M','4.10','4.20')")
+        conn.commit()
+        conn.close()
+        with QuoteStore(str(self.db)) as s:   # opening must upgrade it in place
+            surf = sources.surface_from_store(
+                s, "2026-08-07", ["USD"], verbose=False)
+        self.assertAlmostEqual(surf["USD"]["bid"]["3M"], 0.0410)
+
+
 class TestDocxReader(unittest.TestCase):
     def setUp(self):
         self.tmp = Path("_test_tmp.docx")
@@ -209,8 +347,12 @@ class TestDocxReader(unittest.TestCase):
             ("Money Market Reference is for T+0 value.",),
         ])
         surf, meta = parse_docx(str(self.tmp), verbose=False)
-        self.assertAlmostEqual(surf["USD"]["bid"]["1M"], 0.0385)
-        self.assertAlmostEqual(surf["EUR"]["bid"]["3M"], 0.0250)
+        # a single reference rate is one-sided: it lands on 'mid', and NEVER as
+        # bid == offer, which would imply a zero spread and fake arbitrage
+        self.assertAlmostEqual(surf["USD"]["mid"]["1M"], 0.0385)
+        self.assertAlmostEqual(surf["EUR"]["mid"]["3M"], 0.0250)
+        self.assertEqual(surf["USD"]["bid"], {})
+        self.assertEqual(surf["USD"]["offer"], {})
         # both currency columns survive even when they hold identical numbers
         self.assertIn("EUR", surf)
         self.assertEqual(meta["settle"], "T+0")
@@ -247,9 +389,9 @@ class TestDocxReader(unittest.TestCase):
             ("5Y", "4.70"),
         ])
         surf, meta = parse_docx(str(self.tmp), verbose=False)
-        self.assertIn("1M", surf["USD"]["bid"])
-        self.assertNotIn("3Y", surf["USD"]["bid"])   # bond rows must not leak
-        self.assertNotIn("5Y", surf["USD"]["bid"])
+        self.assertIn("1M", surf["USD"]["mid"])
+        self.assertNotIn("3Y", surf["USD"]["mid"])   # bond rows must not leak
+        self.assertNotIn("5Y", surf["USD"]["mid"])
         self.assertTrue(meta["skipped"])
 
 

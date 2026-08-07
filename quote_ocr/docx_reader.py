@@ -79,19 +79,24 @@ def parse_docx(path: str, default_currency: str = "",
     surface: {ccy: {'bid': {tenor: rate}, 'offer': {tenor: rate}}} in decimals.
     meta:    {'settle': 'T+0'|'T+2'|'', 'sections': [...], 'reference_only': [ccy]}
 
-    A single reference rate is stored on BOTH sides (bid == offer) and the
-    currency is listed under ``reference_only`` -- it is an indication, not a
-    tradeable two-way price, so the caller can decide how to treat it.
+    A single reference rate is stored ONLY under ``mid`` (never as bid == offer,
+    which would imply a zero spread and manufacture arbitrage) and the currency
+    is listed under ``reference_only``.
     """
     surface: Dict = {}
     meta: Dict = {"settle": "", "sections": [], "reference_only": [], "skipped": []}
 
-    def put(ccy, tenor, bid, offer):
-        e = surface.setdefault(ccy.upper(), {"bid": {}, "offer": {}})
+    def put(ccy, tenor, bid, offer, mid=None):
+        e = surface.setdefault(ccy.upper(), {"bid": {}, "offer": {}, "mid": {}})
         if bid is not None:
             e["bid"][tenor] = bid / 100.0
         if offer is not None:
             e["offer"][tenor] = offer / 100.0
+        if mid is not None:
+            # A single reference rate is NOT a two-way price. Storing it as
+            # bid == offer would imply a zero spread and manufacture arbitrage
+            # against any genuine two-way quote, so it lives on its own side.
+            e["mid"][tenor] = mid / 100.0
 
     section = ""            # last non-table-ish title row, e.g. "USD RATES (%)"
     columns: List[str] = []  # currency per data column, or ['BID','OFFER']
@@ -151,7 +156,7 @@ def parse_docx(path: str, default_currency: str = "",
                 for ccy, v in zip(columns, vals):
                     if v is None:
                         continue
-                    put(ccy, tenor, v, v)
+                    put(ccy, tenor, None, None, mid=v)   # one-sided reference
                     if ccy not in meta["reference_only"]:
                         meta["reference_only"].append(ccy)
             else:
@@ -163,9 +168,11 @@ def parse_docx(path: str, default_currency: str = "",
                     elif "OFFER" in name or "ASK" in name:
                         offer = v
                 if bid is None and offer is None and vals:
-                    bid = offer = vals[0]
                     if col_ccy not in meta["reference_only"]:
                         meta["reference_only"].append(col_ccy)
+                    if col_ccy:
+                        put(col_ccy, tenor, None, None, mid=vals[0])
+                    continue
                 if col_ccy:
                     put(col_ccy, tenor, bid, offer)
 

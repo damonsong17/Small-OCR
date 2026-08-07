@@ -24,6 +24,9 @@ FIELDNAMES = [
     "segment",        # market/desk grouping, e.g. Chinese, Korean, ISLAMIC
     "benchmark",      # reference index for the row, e.g. SOFR, EURIBOR, CNH HIBOR
     "benchmark_rate", # the index value, when present
+    "mid",            # a SINGLE reference rate, when the source quotes one
+                      # number instead of a two-way price. Kept apart from
+                      # bid/offer so it can never be read as an executable price.
 ]
 
 
@@ -38,6 +41,7 @@ class Quote:
     tenor: str = ""
     bid: str = ""
     offer: str = ""
+    mid: str = ""
     source_file: str = ""
     page: int = 1
     confidence: float = 0.0

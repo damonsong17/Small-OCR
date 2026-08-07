@@ -49,16 +49,19 @@ def main(argv=None):
             for s in meta["sections"]:
                 print(f"  section: {s}")
         print()
-        print(f"  {'ccy':5} {'tenor':6} {'bid%':>10} {'offer%':>10}  note")
-        print("  " + "-" * 52)
+        print(f"  {'ccy':5} {'tenor':6} {'bid%':>10} {'offer%':>10} {'mid%':>10}  note")
+        print("  " + "-" * 64)
         n = 0
         for ccy in sorted(surf):
-            ref = ccy in {c.upper() for c in meta.get("reference_only", [])}
-            b, o = surf[ccy]["bid"], surf[ccy]["offer"]
-            for t in sorted(set(b) | set(o), key=lambda x: _order(x)):
-                bv, ov = b.get(t), o.get(t)
-                note = "reference only (bid==offer)" if ref else ""
-                print(f"  {ccy:5} {t:6} {_f(bv):>10} {_f(ov):>10}  {note}")
+            b = surf[ccy]["bid"]
+            o = surf[ccy]["offer"]
+            m = surf[ccy].get("mid", {})
+            for t in sorted(set(b) | set(o) | set(m), key=lambda x: _order(x)):
+                bv, ov, mv = b.get(t), o.get(t), m.get(t)
+                # A one-sided rate must show up as one-sided here too, otherwise
+                # this check would confirm a two-way price that does not exist.
+                note = "reference only (one-sided)" if mv is not None else ""
+                print(f"  {ccy:5} {t:6} {_f(bv):>10} {_f(ov):>10} {_f(mv):>10}  {note}")
                 n += 1
         print(f"\n  {n} quote row(s) for {len(surf)} currency(ies)")
         bad += _checks(surf, meta, args.max_rate)
@@ -73,17 +76,20 @@ def _checks(surf, meta, max_rate) -> int:
     if not surf:
         problems.append("no quotes extracted at all")
     for ccy, sides in surf.items():
-        for t in set(sides["bid"]) | set(sides["offer"]):
-            bv, ov = sides["bid"].get(t), sides["offer"].get(t)
-            for name, v in (("bid", bv), ("offer", ov)):
+        mid = sides.get("mid", {})
+        for t in set(sides["bid"]) | set(sides["offer"]) | set(mid):
+            bv, ov, mv = sides["bid"].get(t), sides["offer"].get(t), mid.get(t)
+            for name, v in (("bid", bv), ("offer", ov), ("mid", mv)):
                 if v is None:
                     continue
                 if not (-0.05 <= v <= max_rate / 100.0):
                     problems.append(f"{ccy} {t} {name} = {v*100:.4f}% is implausible")
             if bv is not None and ov is not None and bv > ov + 1e-9:
-                ref = ccy in {c.upper() for c in meta.get("reference_only", [])}
-                if not ref:
-                    problems.append(f"{ccy} {t}: bid {bv*100:.4f} > offer {ov*100:.4f}")
+                problems.append(f"{ccy} {t}: bid {bv*100:.4f} > offer {ov*100:.4f}")
+            # a reference rate must NOT have been duplicated onto both sides
+            if mv is not None and (bv is not None or ov is not None):
+                problems.append(f"{ccy} {t}: one-sided reference rate also has a "
+                                f"bid/offer -- it must stay one-sided")
     if not meta.get("settle"):
         problems.append("settlement basis not found -- confirm T+0 vs T+2 by hand")
     for pr in problems:

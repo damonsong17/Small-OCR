@@ -54,6 +54,23 @@ $$\frac{F}{S} = \frac{1 + r_{quote}\,t}{1 + r_{base}\,t}$$
 
 这正是"从渠道价 + 市场 FX 找当下最新的套利空间"。`scan.py` 交易前跑一遍即可。
 
+### (a2) 跨渠道套利 —— 已实现(`scan_across_channels`)
+"内部报价能不能拿到 AFS 那里套利" —— 每个来源(AFS / MM / MP / 手输 / 经纪)各自保留一张
+surface,**不合并**,然后对每一对有序渠道 (A→B) 扫两种形态:
+
+- **同币种、无 FX 腿**:`借 ccy @A.offer → 拆 ccy @B.bid`,edge = `(B.bid − A.offer)·1e4`;
+- **跨币种、经 FX swap**:`借 @A.offer → FX swap → 拆另一币种 @B.bid`。
+
+结果里每条腿都写明来源:`borrow USD 3M @MP -> lend USD 3M @AFS`。
+
+> 为什么必须分开存:`merge_surfaces` 取"最低 offer / 最高 bid",若 AFS offer 4.10、内部
+> offer 3.90,合并后只剩 3.90,**"内部借、AFS 拆"这笔交易就消失了**。合并恰好抹掉了我们要找的东西。
+
+**单边报价(reference rate)**:内部 MM 邮件每个币种只给**一个**数,不是双边价。它存进
+`mid` 一侧,**绝不写成 `bid == offer`**——那等于宣称零点差,会凭空造出套利。要参与扫描时由
+`sources.apply_reference_sides()` 按假定半点差展开成双边,并记下"哪一侧是我们编出来的",
+凡用到的路径一律标 `[INDICATIVE]`。发布的 FTP 面默认**剔除**这些边(`--ftp-use-reference` 可覆盖)。
+
 ### (b) 市场 CIP basis —— scaffold(phase 2)
 纯市场无效率(xccy basis):Bloomberg **市场利率(OIS/HIBOR)** vs **FX-swap 隐含利率** 的偏离。需要 OIS 等 ticker(§10 待确认)。结构上与 (a) 相同,只是两腿都用 Bloomberg 市场利率而非渠道价。风险类型标注为"basis / 需资产负债表容量"。
 
@@ -83,15 +100,25 @@ Phase 2 把 §「Axpo 边际定价」框架接入:margin 不再是常数,而是�
 ## 8. 运行流程(交易前,带终端)
 
 ```powershell
-# 每次有交易需求前跑一遍,确保市场腿是当下最新 FXFA 数据:
-python scan.py --db data\output\quotes.db --date 2026-07-16 --live
+# 0) 把当天的图片和内部报价 word 一起入库(增量,已处理的自动跳过)
+#    data\inbox\AFS\AFS_20260807.png, data\inbox\MM\MM_20260807.docx, ...
+python ingest.py data\inbox --out data\output
+
+# 1) 交易前跑一遍,确保市场腿是当下最新 FXFA 数据:
+python run_desk.py --db data\output\quotes.db --date 2026-08-07 --tenors auto --live
 ```
-输出按 bps 降序的机会清单(pair / tenor / bps / 风险类型 / 借-swap-拆路径)。离线开发用不带 `--live`(mock 市场数据)。
+
+`run_desk.py` 一次给出三块:**渠道内套利**、**跨渠道套利(借一家、拆另一家)**、以及**无套利
+FTP 面**。`scan.py` 是单面版本,`--source AFS` 可只看一家。离线开发去掉 `--live`(mock 市场数据)。
+
+标记含义:`MISMATCH` = 期限错配(gap/rollover 风险,腿的 tenor 都写在 `legs` 里);
+`INDIC` = 某条腿来自单边 reference rate,不是可成交的双边价,下单前需确认真实报价。
 
 ## 9. 分阶段
 
 1. **Pilot(现在)**:AFS 单渠道 + Bloomberg FX。检测 (a)、(c);(b) scaffold。✅ 引擎可离线跑通。
-2. **+ 内部总行融资**:再加一个 channel 的 surface,`scan` 支持多渠道对比(跨渠道套利:A 渠道借、B 渠道拆)。
+2. **+ 内部总行融资**:✅ MM / MP 的 word 邮件直接读表(不经 OCR),按独立来源入库、分文件夹出
+   CSV;`run_desk.py` 自动做跨渠道套利(A 渠道借、B 渠道拆)。
 3. **+ 更多渠道 & 市场利率**:接 OIS ticker,启用 (b) 市场 basis 监控。
 4. **+ 组合边际定价**:FTP margin 用 variance+LCR/NSFR 边际贡献(Axpo 思路)。
 
@@ -105,6 +132,10 @@ python scan.py --db data\output\quotes.db --date 2026-07-16 --live
 ## 11. 未决问题(影响数值,不影响结构)
 
 1. **AFS bid/offer 的确切含义**:是否为货币的存/贷(borrow/lend)利率?哪一侧是借、哪一侧是拆?(决定 §3 约定)
+   —— 这仍是把 bps 变成可下单数字前**唯一**缺的业务输入;当前按 `offer = 借入、bid = 拆出`。
 2. 远期腿 ticker 返回 points 还是 outright、pip 因子。
+3. **结算日不一致**:MM 是 T+0,MP / AFS 是 T+2。目前只**报告**不换算(`benchmark` 列存了
+   T+0/T+2)。要跨这两者比价,需要你定 O/N 的换算口径;定了之后只改换算函数,引擎不动。
+4. 单边 reference rate 的假定半点差(`--ref-spread-bps`),默认 0(即直接用该参考价两侧)。
 
 以上两点确认后,数值即为可交易口径;当前引擎与路径判断已就绪。
