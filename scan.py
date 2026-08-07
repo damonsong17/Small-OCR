@@ -37,15 +37,15 @@ def main(argv=None):
     p.add_argument("--ccy", default="USD,CNH,CHF,EUR,HKD",
                    help="Currencies; all pair combinations are checked "
                         "(ignored if --pairs is given).")
-    p.add_argument("--tenors", default="1M,3M,6M,1Y",
-                   help="Tenors (sources quote 1M/3M/6M/1Y only).")
+    p.add_argument("--tenors", default="auto",
+                   help="Tenors to scan. 'auto' (default) uses every tenor the "
+                        "quote sources actually contain -- never hardcode.")
     p.add_argument("--threshold", type=float, default=0.5, help="Min bps to flag.")
     p.add_argument("--no-mismatch", action="store_true",
                    help="Only same-tenor round trips.")
     p.add_argument("--live", action="store_true", help="Use the Bloomberg terminal.")
     args = p.parse_args(argv)
 
-    tenors = [x.strip() for x in args.tenors.split(",")]
     if args.pairs.strip():
         pairs = [x.strip() for x in args.pairs.split(",") if x.strip()]
     else:
@@ -62,6 +62,13 @@ def main(argv=None):
     else:
         print("(no --db/--date; using demo funding surface)")
         surface = DEMO_SURFACE
+
+    if args.tenors.strip().lower() == "auto":
+        from quote_ocr import sources as _src
+        tenors = _src.tenors_in(surface)
+        print(f"tenors (auto-discovered from the quotes): {', '.join(tenors)}")
+    else:
+        tenors = [x.strip() for x in args.tenors.split(",") if x.strip()]
 
     # 2) FX market data (live terminal or mock)
     client = BloombergClient() if args.live else demo_mock_fx()

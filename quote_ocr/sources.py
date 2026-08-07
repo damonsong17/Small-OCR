@@ -291,6 +291,24 @@ def _looks_like_header(parts: List[str]) -> bool:
     return "currency" in low or "ccy" in low
 
 
+_TENOR_ORDER = ["O/N", "T/N", "S/N", "1W", "2W", "3W", "1M", "2M", "3M", "4M",
+                "5M", "6M", "9M", "1Y", "12M", "2Y", "3Y", "5Y"]
+
+
+def tenors_in(surface: Dict) -> List[str]:
+    """Every tenor the quote sources actually contain, in market order.
+
+    The scan must follow the data: AFS quotes O/N, 1W, 2W, 1M, 2M, 3M, 6M, 1Y,
+    and hardcoding a shorter list silently drops real opportunities.
+    """
+    found = set()
+    for sides in surface.values():
+        for side in ("bid", "offer"):
+            found.update(sides.get(side, {}))
+    rank = {t: i for i, t in enumerate(_TENOR_ORDER)}
+    return sorted(found, key=lambda t: (rank.get(t.upper(), 99), t))
+
+
 def merge_surfaces(*surfaces: Dict) -> Dict:
     """Combine channels: best borrow (lowest offer), best lend (highest bid)."""
     out: Dict = {}

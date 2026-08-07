@@ -33,3 +33,5 @@ requirements.lock.txt
 
 # Resolved Bloomberg ticker overrides (machine-specific)
 fx_tickers.json
+
+tests/__pycache__/

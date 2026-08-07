@@ -45,8 +45,9 @@ def main(argv=None):
                    help="Ad-hoc quote, e.g. --quote \"USD,3M,4.00,4.10\"; "
                         "repeatable. For a broker's quote typed in on the spot.")
     p.add_argument("--ccy", default="USD,CNH,CHF,EUR,HKD", help="Currencies.")
-    p.add_argument("--tenors", default="1M,3M,6M,1Y",
-                   help="Tenors (sources quote 1M/3M/6M/1Y only).")
+    p.add_argument("--tenors", default="auto",
+                   help="Tenors to scan. 'auto' (default) uses every tenor the "
+                        "quote sources actually contain -- never hardcode.")
     p.add_argument("--threshold", type=float, default=0.5, help="Min bps to flag.")
     p.add_argument("--no-mismatch", action="store_true",
                    help="Only same-tenor round trips (default allows a tenor "
@@ -67,7 +68,6 @@ def main(argv=None):
 
     sources.load_access(args.access)
     ccys = [c.strip().upper() for c in args.ccy.split(",") if c.strip()]
-    tenors = [t.strip() for t in args.tenors.split(",") if t.strip()]
     pairs = all_pairs(ccys)
     excl = set() if args.include_untradeable else None
 
@@ -96,9 +96,16 @@ def main(argv=None):
         surfaces.append(_demo_surface())
     surface = sources.merge_surfaces(*surfaces)
 
+    # Follow the data: scan every tenor the sources actually quote.
+    if args.tenors.strip().lower() == "auto":
+        tenors = sources.tenors_in(surface)
+        print(f"tenors (auto-discovered from the quotes): {', '.join(tenors)}")
+    else:
+        tenors = [t.strip() for t in args.tenors.split(",") if t.strip()]
+
     print(f"currencies: {', '.join(ccys)}")
     print(f"pairs ({len(pairs)}): {', '.join(pairs)}")
-    print(f"tenors: {', '.join(tenors)}\n")
+    print()
 
     # ---- 2. FX market --------------------------------------------------------
     from quote_ocr import tickers as tk

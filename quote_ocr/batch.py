@@ -8,8 +8,8 @@ Processing is incremental -- a file whose SHA-1 already appears in the store's
 manifest is skipped, so re-running only picks up new or changed images.
 
 Outputs are written into separate directories:
-    <out>/csv/<SOURCE>_<DATE>.csv
-    <out>/xlsx/<SOURCE>_<DATE>.xlsx
+    <out>/csv/<SOURCE>/<SOURCE>_<DATE>.csv
+    <out>/xlsx/<SOURCE>/<SOURCE>_<DATE>.xlsx
     <out>/quotes.db          (full history + manifest)
 """
 from __future__ import annotations
@@ -38,6 +38,31 @@ def parse_filename(stem: str):
     if len(d) != 8:
         return None
     return m.group("source"), f"{d[:4]}-{d[4:6]}-{d[6:8]}"
+
+
+def _quotes_from_docx(path: str):
+    """Turn a .docx rate email into Quote rows for the store."""
+    from .docx_reader import parse_docx
+    from .models import Quote
+    surf, meta = parse_docx(path, verbose=False)
+    ref_only = {c.upper() for c in meta.get("reference_only", [])}
+    out = []
+    for ccy, sides in surf.items():
+        tenors = set(sides.get("bid", {})) | set(sides.get("offer", {}))
+        for t in tenors:
+            b = sides.get("bid", {}).get(t)
+            o = sides.get("offer", {}).get(t)
+            out.append(Quote(
+                currency=ccy, tenor=t,
+                bid="" if b is None else f"{b*100:.6f}".rstrip("0").rstrip("."),
+                offer="" if o is None else f"{o*100:.6f}".rstrip("0").rstrip("."),
+                # provenance the desk must see: settlement basis, and whether
+                # this is a one-sided reference rate rather than a two-way price
+                segment=("reference" if ccy in ref_only else ""),
+                benchmark=meta.get("settle", ""),
+                source_file=Path(path).name, page=1, confidence=1.0,
+                raw=f"docx {meta.get('settle','')}"))
+    return out
 
 
 def _xlsx_builder():
@@ -84,7 +109,7 @@ def ingest(
 
     files = [
         p for p in sorted(inbox_path.rglob("*"))
-        if p.suffix.lower() in SUPPORTED_SUFFIXES
+        if p.suffix.lower() in SUPPORTED_SUFFIXES or p.suffix.lower() == ".docx"
     ]
     if verbose:
         print(f"  found {len(files)} image file(s) under {inbox}")
@@ -112,18 +137,28 @@ def ingest(
             if verbose:
                 print(f"  [{i}/{n}] processing {path.name} ... ", end="", flush=True)
             t0 = time.time()
-            quotes = pipeline.run_file(str(path), supplier=source)
+            if path.suffix.lower() == ".docx":
+                # Internal rate emails: real tables, parsed exactly (no OCR).
+                quotes = _quotes_from_docx(str(path))
+            else:
+                quotes = pipeline.run_file(str(path), supplier=source)
             for q in quotes:
                 q.date = date        # authoritative date from the filename
                 q.supplier = source  # the quotation source
             store.replace_quotes(source, date, quotes)
             store.record_file(str(path), source, date, sha1, len(quotes))
 
+            # One folder per source, so AFS / MM / MP stay separated on disk
+            # exactly as they are separated in the store.
             stem = f"{source}_{date}"
-            to_csv(quotes, str(csv_dir / f"{stem}.csv"))
+            src_csv = csv_dir / source
+            src_csv.mkdir(parents=True, exist_ok=True)
+            to_csv(quotes, str(src_csv / f"{stem}.csv"))
             if make_xlsx and xlsx_build is not None:
+                src_xlsx = xlsx_dir / source
+                src_xlsx.mkdir(parents=True, exist_ok=True)
                 xlsx_build([q.as_row() for q in quotes]).save(
-                    str(xlsx_dir / f"{stem}.xlsx")
+                    str(src_xlsx / f"{stem}.xlsx")
                 )
 
             summary["processed"] += 1
