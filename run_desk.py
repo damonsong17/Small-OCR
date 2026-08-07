@@ -38,6 +38,9 @@ def main(argv=None):
     p.add_argument("--date", default=None, help="Quote date, e.g. 2026-07-16.")
     p.add_argument("--txt", action="append", default=[],
                    help="Extra quote file (.txt/.csv); repeatable.")
+    p.add_argument("--docx", action="append", default=[],
+                   help="Internal rate email saved as .docx; repeatable. "
+                        "Read directly (exact) -- do NOT print to PDF and OCR.")
     p.add_argument("--quote", action="append", default=[],
                    help="Ad-hoc quote, e.g. --quote \"USD,3M,4.00,4.10\"; "
                         "repeatable. For a broker's quote typed in on the spot.")
@@ -76,6 +79,16 @@ def main(argv=None):
             surfaces.append(sources.surface_from_store(store, args.date, ccys, excl))
     for path in args.txt:
         surfaces.append(sources.surface_from_text(path, excl))
+    for path in args.docx:
+        from quote_ocr.docx_reader import parse_docx
+        surf_d, meta_d = parse_docx(path)
+        if meta_d.get("reference_only"):
+            print(f"    note: {', '.join(meta_d['reference_only'])} are single "
+                  f"reference rates (bid==offer), not tradeable two-way prices")
+        if meta_d.get("settle"):
+            print(f"    note: settlement {meta_d['settle']} -- confirm it matches "
+                  f"the other channels before comparing")
+        surfaces.append(surf_d)
     if args.quote:
         surfaces.append(sources.surface_from_lines(args.quote, "manual quotes"))
     if not surfaces:
