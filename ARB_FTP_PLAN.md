@@ -85,6 +85,26 @@ surface,**不合并**,然后对每一对有序渠道 (A→B) 扫两种形态:
 
 引擎里就是 `implied_quote_rate(F/S, EUR_offer, t) < USD_bid` 触发。**FTP 面必须扫描后为空**才能发布。
 
+### (c2) 检测**已发布**的 FTP 表 —— 已实现(`check_ftp.py`)
+
+拿桌面上那张真实的 FTP xlsx 直接扫:
+
+```powershell
+python check_ftp.py FTP.xlsx --live
+```
+
+**只扫同 tenor。** 期限错配是敞口 —— 要在未知的未来利率上 roll —— 我们发布的报价不该为它负责;
+同 tenor 的往返当天就闭合,那才是我们的敞口。`--allow-mismatch` 可以顺便看看错配路径,
+只作信息,不阻断发布。
+
+有同 tenor 套利时 **exit code = 1**,可以直接当发布前的闸门。
+
+两个必须说清的点:
+- **空表不算通过。** 一张全是 `x.xx%` 的模板读出 0 个利率时,工具报错退出(code 2),
+  绝不回一句"没发现套利"。
+- **没测到的要说出来。** 缺报价或缺 FX 数据的方向会单独计数并列出,
+  结论写成"在能测的 N 条往返里没发现",而不是笼统的"干净"。
+
 ## 6. FTP 报价生成 + 无套利修正
 
 Pilot 版(AFS-only)分两步:
@@ -115,6 +135,19 @@ python run_desk.py --db data\output\quotes.db --date 2026-08-07 --tenors auto --
 
 `run_desk.py` 一次给出三块:**渠道内套利**、**跨渠道套利(借一家、拆另一家)**、以及**无套利
 FTP 面**。`scan.py` 是单面版本,`--source AFS` 可只看一家。离线开发去掉 `--live`(mock 市场数据)。
+
+**填进桌面那张 FTP 表**(`quote_ocr/ftp_sheet.py`,读写同一个布局):
+
+```powershell
+python run_desk.py --db data\output\quotes.db --date 2026-08-10 --live `
+       --template FTP_template.xlsx --out-xlsx FTP_20260810.xlsx
+```
+
+模板先被**复制**再填 —— 结算说明、对手方点差表(A/B/C/D × ≤T / >T≤K)、市场基准利率块
+这些本 pipeline 不建模的内容因此原样保留。算不出来的格子保持模板原样,**绝不写 0**。
+
+百分比坑:Excel 里 percent 格式的 3.85% 存的是 0.0385,而普通格式里的 3.85 也是 3.85%。
+读写两边都按 number format 判断并报告,不靠猜 —— 猜错就是融资曲线中间的 100 倍误差。
 
 标记含义:`MISMATCH` = 期限错配(gap/rollover 风险,腿的 tenor 都写在 `legs` 里);
 `INDIC` = 某条腿来自 mid(公布的是中间价,不是可成交的边),下单前需确认真实报价。

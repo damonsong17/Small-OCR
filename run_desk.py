@@ -78,6 +78,13 @@ def main(argv=None):
     p.add_argument("--access", default=sources.ACCESS_FILE,
                    help="Counterparty KYC access config (JSON).")
     p.add_argument("--out", default=None, help="Write FTP surface to this CSV.")
+    p.add_argument("--out-xlsx", default=None,
+                   help="Write the FTP surface into the desk's workbook layout. "
+                        "Needs --template.")
+    p.add_argument("--template", default=None,
+                   help="The real FTP workbook to fill in. It is copied first, "
+                        "so its notes, counterparty spreads and market-reference "
+                        "block -- none of which this pipeline models -- survive.")
     p.add_argument("--tickers", default="fx_tickers.json",
                    help="Cross-pair ticker overrides (see fx_resolve.py).")
     p.add_argument("--live", action="store_true", help="Use the Bloomberg terminal.")
@@ -208,6 +215,23 @@ def main(argv=None):
             print(f"\n! could not write {args.out} -- it is open in another "
                   f"program (Excel?). Close it, or pass a different --out. "
                   f"Everything above is still valid.")
+
+    if args.out_xlsx:
+        if not args.template:
+            print("\n! --out-xlsx needs --template (the real FTP workbook to "
+                  "fill in). Everything above is still valid.")
+        else:
+            from quote_ocr.ftp_sheet import write_ftp_sheet
+            try:
+                write_ftp_sheet(ftp_surface, args.template, args.out_xlsx,
+                                date=args.date)
+            except PermissionError:
+                print(f"\n! could not write {args.out_xlsx} -- it is open in "
+                      f"Excel. Close it and rerun.")
+            except Exception as e:
+                print(f"\n! could not fill the workbook: {e}")
+                print("  The surface above is still valid; check --template "
+                      "points at a sheet with 'Offer Side' / 'Bid Side' headers.")
 
 
 def _merged_indicative(channels, indicative, merged):

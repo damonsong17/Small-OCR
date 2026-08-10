@@ -428,5 +428,119 @@ class TestDocxReader(unittest.TestCase):
         self.assertTrue(meta["skipped"])
 
 
+try:
+    import openpyxl
+    _HAVE_XLSX = True
+except ImportError:                                   # pragma: no cover
+    _HAVE_XLSX = False
+
+
+def _make_ftp_book(path, rows, fmt="0.00%"):
+    """Minimal FTP sheet: Tenor | Offer Side (USD CNH) | Bid Side (USD CNH)."""
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws["B2"], ws["C2"] = "Date:", "2026-08-10"
+    ws["B3"], ws["C3"], ws["E3"] = "Tenor", "Offer Side", "Bid Side"
+    for col, v in zip("CDEF", ["USD", "CNH", "USD", "CNH"]):
+        ws[f"{col}4"] = v
+    for i, (tenor, vals) in enumerate(rows):
+        r = 5 + i
+        ws[f"B{r}"] = tenor
+        for col, v in zip("CDEF", vals):
+            cell = ws[f"{col}{r}"]
+            cell.value = v
+            cell.number_format = fmt
+    wb.save(path)
+
+
+@unittest.skipUnless(_HAVE_XLSX, "openpyxl not installed")
+class TestFtpSheet(unittest.TestCase):
+    """The published FTP workbook: reading it, and filling it in."""
+
+    def setUp(self):
+        self.tmp = Path("_test_ftp.xlsx")
+        self.out = Path("_test_ftp_out.xlsx")
+
+    def tearDown(self):
+        for f in (self.tmp, self.out):
+            if f.exists():
+                os.remove(f)
+
+    def test_percent_formatted_cells_are_already_fractions(self):
+        from quote_ocr.ftp_sheet import read_ftp_sheet
+        # Excel stores 3.85% as 0.0385 when the cell is percent-formatted
+        _make_ftp_book(self.tmp, [("3M", [0.0414, 0.0168, 0.0400, 0.0146])])
+        surf, _ = read_ftp_sheet(str(self.tmp), verbose=False)
+        self.assertAlmostEqual(surf["USD"]["offer"]["3M"], 0.0414)
+        self.assertAlmostEqual(surf["CNH"]["bid"]["3M"], 0.0146)
+
+    def test_bare_numbers_are_read_as_percent(self):
+        from quote_ocr.ftp_sheet import read_ftp_sheet
+        # the same rates typed into General-formatted cells as 4.14 etc.
+        _make_ftp_book(self.tmp, [("3M", [4.14, 1.68, 4.00, 1.46])], fmt="General")
+        surf, _ = read_ftp_sheet(str(self.tmp), verbose=False)
+        self.assertAlmostEqual(surf["USD"]["offer"]["3M"], 0.0414)
+        self.assertAlmostEqual(surf["CNH"]["bid"]["3M"], 0.0146)
+
+    def test_placeholders_are_not_rates(self):
+        from quote_ocr.ftp_sheet import read_ftp_sheet
+        # an unfilled template must never read as 0% -- that would look like a
+        # free deposit and manufacture arbitrage against every other currency
+        _make_ftp_book(self.tmp, [("3M", ["x.xx%", "-", "x.xx%", "-"])])
+        surf, meta = read_ftp_sheet(str(self.tmp), verbose=False)
+        self.assertEqual(surf["USD"]["offer"], {})
+        self.assertEqual(surf["CNH"]["bid"], {})
+        self.assertEqual(len(meta["blank"]), 4)
+        self.assertFalse(meta["unparsed"])
+
+    def test_unreadable_cell_is_reported_not_dropped(self):
+        from quote_ocr.ftp_sheet import read_ftp_sheet
+        _make_ftp_book(self.tmp, [("3M", [0.04, "n/a", 0.039, 0.014])])
+        surf, meta = read_ftp_sheet(str(self.tmp), verbose=False)
+        self.assertNotIn("3M", surf["CNH"]["offer"])
+        self.assertTrue(any("CNH 3M offer" in u for u in meta["unparsed"]))
+
+    def test_write_then_read_round_trips(self):
+        from quote_ocr.ftp_sheet import read_ftp_sheet, write_ftp_sheet
+        _make_ftp_book(self.tmp, [("1M", ["x.xx%"] * 4), ("3M", ["x.xx%"] * 4)])
+        surf = {"USD": {"offer": {"1M": 0.0392, "3M": 0.0414},
+                        "bid": {"1M": 0.0378, "3M": 0.0400}},
+                "CNH": {"offer": {"3M": 0.0168}, "bid": {"3M": 0.0146}}}
+        write_ftp_sheet(surf, str(self.tmp), str(self.out), verbose=False)
+        back, _ = read_ftp_sheet(str(self.out), verbose=False)
+        self.assertAlmostEqual(back["USD"]["offer"]["3M"], 0.0414)
+        self.assertAlmostEqual(back["CNH"]["bid"]["3M"], 0.0146)
+        # a tenor we had no rate for keeps the template marker, never 0
+        self.assertNotIn("1M", back["CNH"]["offer"])
+
+    def test_1y_surface_fills_the_sheets_12m_row(self):
+        from quote_ocr.ftp_sheet import read_ftp_sheet, write_ftp_sheet
+        _make_ftp_book(self.tmp, [("12M", ["x.xx%"] * 4)])
+        write_ftp_sheet({"USD": {"offer": {"1Y": 0.0438}, "bid": {}}},
+                        str(self.tmp), str(self.out), verbose=False)
+        back, _ = read_ftp_sheet(str(self.out), verbose=False)
+        self.assertAlmostEqual(back["USD"]["offer"]["12M"], 0.0438)
+
+    def test_writing_over_the_template_is_refused(self):
+        from quote_ocr.ftp_sheet import write_ftp_sheet
+        _make_ftp_book(self.tmp, [("3M", ["x.xx%"] * 4)])
+        with self.assertRaises(ValueError):
+            write_ftp_sheet({}, str(self.tmp), str(self.tmp), verbose=False)
+
+    def test_an_empty_sheet_is_not_a_pass(self):
+        """The worst possible bug in this tool: certifying a blank template."""
+        import check_ftp
+        _make_ftp_book(self.tmp, [("3M", ["x.xx%"] * 4)])
+        rc = check_ftp.main([str(self.tmp)])
+        self.assertEqual(rc, 2, "a sheet with no rates must not report 'no arbitrage'")
+
+    def test_a_planted_arbitrage_is_caught_and_fails_the_run(self):
+        import check_ftp
+        # CNH bid set absurdly high: borrowing USD and placing CNH must profit
+        _make_ftp_book(self.tmp, [("3M", [0.0414, 0.0168, 0.0400, 0.0310])])
+        rc = check_ftp.main([str(self.tmp), "--tenors", "3M", "--ccy", "USD,CNH"])
+        self.assertEqual(rc, 1, "a same-tenor round trip must fail the check")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
