@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from pathlib import Path
 
 from quote_ocr.docx_reader import parse_docx, read_tables
 
@@ -29,13 +30,21 @@ def main(argv=None):
     bad = 0
     for path in args.files:
         print(f"\n{'='*70}\n{path}\n{'='*70}")
-        if args.raw:
-            for ti, table in enumerate(read_tables(path)):
-                print(f"-- raw table {ti} --")
-                for row in table:
-                    line = " | ".join(row)
-                    print("   " + (line[:150] + " ...") if len(line) > 150 else "   " + line)
+        # Check the file before touching it: on the offline machine a stack
+        # trace is no help, and the usual mistake is a path, not a bad document.
+        if not Path(path).is_file():
+            print(f"  FILE NOT FOUND: {path}")
+            print(f"  (run from the repo root and give the path as it is on "
+                  f"disk, e.g. data\\MM\\MM_20260810.docx){_nearby(path)}")
+            bad += 1
+            continue
         try:
+            if args.raw:
+                for ti, table in enumerate(read_tables(path)):
+                    print(f"-- raw table {ti} --")
+                    for row in table:
+                        line = " | ".join(row)
+                        print("   " + (line[:150] + " ...") if len(line) > 150 else "   " + line)
             surf, meta = parse_docx(path, verbose=False)
         except Exception as e:
             print(f"  PARSE FAILED: {e}")
@@ -68,6 +77,21 @@ def main(argv=None):
 
     print(f"\n{'ALL CHECKS PASSED' if bad == 0 else f'{bad} PROBLEM(S) FOUND'}")
     return 1 if bad else 0
+
+
+def _nearby(path: str) -> str:
+    """Point at the .docx files that ARE there, so the fix is one glance away."""
+    p = Path(path)
+    for folder in (p.parent, Path("data") / p.stem.split("_")[0], Path("data"), Path(".")):
+        try:
+            found = sorted(x for x in folder.glob("**/*.docx") if x.is_file())
+        except OSError:
+            continue
+        if found:
+            shown = ", ".join(str(x) for x in found[:6])
+            more = f" ... (+{len(found)-6} more)" if len(found) > 6 else ""
+            return f"\n  .docx files found under {folder}: {shown}{more}"
+    return ""
 
 
 def _checks(surf, meta, max_rate) -> int:
