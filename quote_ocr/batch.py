@@ -80,6 +80,39 @@ def _quotes_from_docx(path: str, single_side: str = "offer"):
     return out
 
 
+def _quotes_from_text(path: str):
+    """Turn a .txt / .csv / .md quote file into Quote rows for the store.
+
+    Text channels (a broker's list, a chat scrape saved to a file, a PDF
+    converted to Markdown) reach the database through the SAME schema as OCR and
+    .docx sources, so a query does not need to know where a rate came from.
+    """
+    from .models import Quote
+    from .sources import surface_from_text
+
+    surf = surface_from_text(path)
+    out = []
+
+    def _pct(v):
+        return "" if v is None else f"{v*100:.6f}".rstrip("0").rstrip(".")
+
+    for ccy, sides in surf.items():
+        for t in sorted(set(sides.get("bid", {})) | set(sides.get("offer", {}))
+                        | set(sides.get("mid", {}))):
+            out.append(Quote(
+                currency=ccy, tenor=t,
+                bid=_pct(sides.get("bid", {}).get(t)),
+                offer=_pct(sides.get("offer", {}).get(t)),
+                mid=_pct(sides.get("mid", {}).get(t)),
+                segment="", source_file=Path(path).name, page=1,
+                confidence=1.0, raw=f"text {Path(path).suffix.lstrip('.')}"))
+    return out
+
+
+# Text formats that carry quotes directly -- no OCR involved.
+TEXT_SUFFIXES = {".txt", ".csv", ".md"}
+
+
 def _xlsx_builder():
     """Return to_excel.build if Excel export is available, else (None, reason)."""
     try:
@@ -131,14 +164,23 @@ def ingest(
         print(f"  ! inbox folder does not exist: {inbox}")
         return {"processed": 0, "skipped": 0, "unnamed": 0, "quotes": 0}
 
-    files = [
-        p for p in sorted(inbox_path.rglob("*"))
-        if p.suffix.lower() in SUPPORTED_SUFFIXES or p.suffix.lower() == ".docx"
-    ]
+    known = SUPPORTED_SUFFIXES | TEXT_SUFFIXES | {".docx"}
+    everything = [p for p in sorted(inbox_path.rglob("*")) if p.is_file()]
+    files = [p for p in everything if p.suffix.lower() in known]
+    # A file we do not handle is REPORTED, never silently passed over: dropping
+    # a quote source without a word is how a whole channel goes missing.
+    ignored = [p for p in everything
+               if p.suffix.lower() not in known and not p.name.startswith("~$")]
     if verbose:
-        print(f"  found {len(files)} image file(s) under {inbox}")
+        print(f"  found {len(files)} quote file(s) under {inbox}")
+        if ignored:
+            exts = sorted({p.suffix.lower() or "(no extension)" for p in ignored})
+            print(f"  ! ignored {len(ignored)} file(s) with unhandled type "
+                  f"{', '.join(exts)}: {', '.join(p.name for p in ignored[:5])}"
+                  + (" ..." if len(ignored) > 5 else ""))
+            print(f"    handled types: {', '.join(sorted(known))}")
     if not files:
-        print(f"  ! no images ({', '.join(sorted(SUPPORTED_SUFFIXES))}) found under {inbox}")
+        print(f"  ! no quote files ({', '.join(sorted(known))}) found under {inbox}")
 
     n = len(files)
     with QuoteStore(str(out_path / "quotes.db")) as store:
@@ -164,6 +206,9 @@ def ingest(
             if path.suffix.lower() == ".docx":
                 # Internal rate emails: real tables, parsed exactly (no OCR).
                 quotes = _quotes_from_docx(str(path))
+            elif path.suffix.lower() in TEXT_SUFFIXES:
+                # Broker lists, chat scrapes, PDF-to-Markdown: already text.
+                quotes = _quotes_from_text(str(path))
             else:
                 quotes = pipeline().run_file(str(path), supplier=source)
             for q in quotes:

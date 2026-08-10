@@ -220,13 +220,36 @@ def surface_from_store(
 #     CNH  3M  1.30  1.55
 #     currency=EUR tenor=6M bid=2.50 offer=2.75
 _KV = re.compile(r"(\w+)\s*=\s*([^\s,]+)")
+# a Markdown table rule: |---|:---:|---|
+_MD_RULE = re.compile(r"^\s*\|?[\s:|-]+\|[\s:|-]*$")
+
+
+def _split(line: str) -> List[str]:
+    """Split a quote line on pipe, comma, or whitespace -- in that order.
+
+    Pipe first so a Markdown table converted from a PDF parses; splitting it on
+    whitespace would yield '|' as a column and shift every field.
+    """
+    if "|" in line:
+        return [p.strip() for p in line.strip().strip("|").split("|")]
+    if "," in line:
+        return [p.strip() for p in line.split(",")]
+    return line.split()
 
 
 def surface_from_text(path: str, exclude_segments: Optional[set] = None) -> Dict:
-    """Parse a .txt/.csv quote file into a surface.
+    """Parse a .txt/.csv/.md quote file into a surface.
 
     Columns (in order) are: currency, tenor, bid, offer[, segment].
     A header line naming those columns is honoured if present.
+
+    Three delimiters are accepted, so the same parser covers a hand-typed line,
+    a CSV export, and a Markdown table converted from a PDF:
+
+        USD, 3M, 4.06, 4.12
+        USD  3M  4.06  4.12
+        | USD | 3M | 4.06 | 4.12 |
+        currency=USD tenor=3M bid=4.06 offer=4.12
     """
     excl = UNTRADEABLE_SEGMENTS if exclude_segments is None else exclude_segments
     surface: Dict = {}
@@ -238,11 +261,13 @@ def surface_from_text(path: str, exclude_segments: Optional[set] = None) -> Dict
         line = raw.split("#", 1)[0].strip()
         if not line:
             continue
+        if _MD_RULE.match(line):
+            continue          # the |---|---| rule under a Markdown header
         if _KV.search(line) and "=" in line:
             d = {k.lower(): v for k, v in _KV.findall(line)}
             rows.append(d)
             continue
-        parts = [p.strip() for p in (line.split(",") if "," in line else line.split())]
+        parts = _split(line)
         if header is None and _looks_like_header(parts):
             header = [p.lower() for p in parts]
             continue

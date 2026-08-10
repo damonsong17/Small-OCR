@@ -428,6 +428,66 @@ class TestDocxReader(unittest.TestCase):
         self.assertTrue(meta["skipped"])
 
 
+class TestTextSources(unittest.TestCase):
+    """Broker lists, chat scrapes and PDF-to-Markdown reach the store too."""
+
+    def setUp(self):
+        self.tmp = Path("_test_quotes.txt")
+
+    def tearDown(self):
+        if self.tmp.exists():
+            os.remove(self.tmp)
+
+    def test_markdown_table_parses(self):
+        # a PDF converted to Markdown: splitting on whitespace would make '|'
+        # a column and shift every field by one
+        self.tmp.write_text(
+            "| currency | tenor | bid  | offer |\n"
+            "|----------|-------|------|-------|\n"
+            "| USD      | 3M    | 4.02 | 4.09  |\n", encoding="utf-8")
+        surf = sources.surface_from_text(str(self.tmp))
+        self.assertAlmostEqual(surf["USD"]["bid"]["3M"], 0.0402)
+        self.assertAlmostEqual(surf["USD"]["offer"]["3M"], 0.0409)
+
+    def test_csv_and_whitespace_forms_agree(self):
+        self.tmp.write_text("USD,3M,4.02,4.09\n", encoding="utf-8")
+        a = sources.surface_from_text(str(self.tmp))
+        self.tmp.write_text("USD  3M  4.02  4.09\n", encoding="utf-8")
+        b = sources.surface_from_text(str(self.tmp))
+        self.assertEqual(a, b)
+
+    def test_text_file_becomes_store_rows(self):
+        from quote_ocr.batch import _quotes_from_text
+        self.tmp.write_text("currency,tenor,bid,offer\nUSD,3M,4.02,4.09\n",
+                            encoding="utf-8")
+        rows = _quotes_from_text(str(self.tmp))
+        self.assertEqual(len(rows), 1)
+        q = rows[0]
+        # same schema as an OCR or .docx row, so a query need not know the origin
+        self.assertEqual((q.currency, q.tenor, q.bid, q.offer), ("USD", "3M", "4.02", "4.09"))
+        self.assertEqual(q.mid, "")
+
+    def test_unhandled_file_types_are_reported_not_skipped(self):
+        import io
+        from contextlib import redirect_stdout
+        from quote_ocr.batch import ingest
+        d = Path("_test_inbox/SRC")
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "SRC_20260810.txt").write_text("USD,3M,4.02,4.09\n", encoding="utf-8")
+        (d / "notes.rtf").write_text("not a quote file", encoding="utf-8")
+        buf = io.StringIO()
+        try:
+            with redirect_stdout(buf):
+                ingest(str(d.parent), "_test_out", make_xlsx=False)
+            out = buf.getvalue()
+            self.assertIn("ignored 1 file", out)
+            self.assertIn("notes.rtf", out)
+        finally:
+            import shutil
+            shutil.rmtree("_test_inbox", ignore_errors=True)
+            shutil.rmtree("_test_out", ignore_errors=True)
+
+
 try:
     import openpyxl
     _HAVE_XLSX = True
