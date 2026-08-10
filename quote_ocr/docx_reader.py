@@ -73,30 +73,39 @@ def _norm_tenor(s: str) -> Optional[str]:
 
 
 def parse_docx(path: str, default_currency: str = "",
-               verbose: bool = True) -> Tuple[Dict, Dict]:
+               verbose: bool = True, single_side: str = "offer") -> Tuple[Dict, Dict]:
     """Return (surface, meta).
 
-    surface: {ccy: {'bid': {tenor: rate}, 'offer': {tenor: rate}}} in decimals.
-    meta:    {'settle': 'T+0'|'T+2'|'', 'sections': [...], 'reference_only': [ccy]}
+    surface: {ccy: {'bid': {tenor}, 'offer': {tenor}, 'mid': {tenor}}}, decimals.
+    meta:    {'settle', 'sections', 'one_sided': [ccy], 'single_side', 'skipped'}
 
-    A single reference rate is stored ONLY under ``mid`` (never as bid == offer,
-    which would imply a zero spread and manufacture arbitrage) and the currency
-    is listed under ``reference_only``.
+    ``single_side`` says which side a table that quotes ONE number per currency
+    actually is. The MM money-market email quotes the **offer** -- the rate we
+    can borrow at -- so that is the default: it is a firm, executable side, and
+    the absence of a bid correctly means we cannot place funds there.
+
+    It is never stored as bid == offer, which would imply a zero spread and
+    manufacture arbitrage against any genuine two-way quote. Pass
+    ``single_side="mid"`` for a source that really does publish a mid; that
+    lands on its own side and is treated as indicative downstream.
     """
-    surface: Dict = {}
-    meta: Dict = {"settle": "", "sections": [], "reference_only": [], "skipped": []}
+    if single_side not in ("offer", "bid", "mid"):
+        raise ValueError(f"single_side must be offer/bid/mid, got {single_side!r}")
 
-    def put(ccy, tenor, bid, offer, mid=None):
+    surface: Dict = {}
+    meta: Dict = {"settle": "", "sections": [], "one_sided": [], "skipped": [],
+                  "single_side": single_side}
+    # kept so existing callers/tests that read 'reference_only' still work
+    meta["reference_only"] = meta["one_sided"]
+
+    def put(ccy, tenor, bid, offer, one=None):
         e = surface.setdefault(ccy.upper(), {"bid": {}, "offer": {}, "mid": {}})
         if bid is not None:
             e["bid"][tenor] = bid / 100.0
         if offer is not None:
             e["offer"][tenor] = offer / 100.0
-        if mid is not None:
-            # A single reference rate is NOT a two-way price. Storing it as
-            # bid == offer would imply a zero spread and manufacture arbitrage
-            # against any genuine two-way quote, so it lives on its own side.
-            e["mid"][tenor] = mid / 100.0
+        if one is not None:
+            e[single_side][tenor] = one / 100.0
 
     section = ""            # last non-table-ish title row, e.g. "USD RATES (%)"
     columns: List[str] = []  # currency per data column, or ['BID','OFFER']
@@ -152,13 +161,14 @@ def parse_docx(path: str, default_currency: str = "",
                 vals.append(float(c) if _NUM_RE.match(c) else None)
 
             if all(_CCY_RE.match(c) for c in columns):
-                # layout A: one reference rate per currency column
+                # layout A: ONE number per currency column -- single_side says
+                # which side that number is (the MM email quotes the offer)
                 for ccy, v in zip(columns, vals):
                     if v is None:
                         continue
-                    put(ccy, tenor, None, None, mid=v)   # one-sided reference
-                    if ccy not in meta["reference_only"]:
-                        meta["reference_only"].append(ccy)
+                    put(ccy, tenor, None, None, one=v)
+                    if ccy not in meta["one_sided"]:
+                        meta["one_sided"].append(ccy)
             else:
                 # layout B: BID / OFFER for the section's currency
                 bid = offer = None
@@ -168,10 +178,10 @@ def parse_docx(path: str, default_currency: str = "",
                     elif "OFFER" in name or "ASK" in name:
                         offer = v
                 if bid is None and offer is None and vals:
-                    if col_ccy not in meta["reference_only"]:
-                        meta["reference_only"].append(col_ccy)
+                    if col_ccy not in meta["one_sided"]:
+                        meta["one_sided"].append(col_ccy)
                     if col_ccy:
-                        put(col_ccy, tenor, None, None, mid=vals[0])
+                        put(col_ccy, tenor, None, None, one=vals[0])
                     continue
                 if col_ccy:
                     put(col_ccy, tenor, bid, offer)
@@ -181,8 +191,8 @@ def parse_docx(path: str, default_currency: str = "",
         ccys = ", ".join(sorted(surface)) or "-"
         print(f"  {name}: {ccys}"
               + (f" | settlement {meta['settle']}" if meta["settle"] else "")
-              + (f" | reference-only (not two-way): {', '.join(meta['reference_only'])}"
-                 if meta["reference_only"] else "")
+              + (f" | one-sided ({single_side} only): {', '.join(meta['one_sided'])}"
+                 if meta["one_sided"] else "")
               + (f" | skipped: {', '.join(meta['skipped'])}" if meta["skipped"] else ""))
     return surface, meta
 

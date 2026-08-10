@@ -230,6 +230,27 @@ class TestCrossChannelArb(unittest.TestCase):
         self.assertAlmostEqual(merged["USD"]["offer"]["3M"], 0.0390)
         self.assertAlmostEqual(merged["USD"]["bid"]["3M"], 0.0410)
 
+    def test_offer_only_channel_can_be_borrowed_from_but_not_placed_with(self):
+        """MM quotes one number and it is the OFFER: firm, and one-directional.
+
+        Borrowing from MM and placing at AFS is a real trade. The reverse --
+        placing funds with MM -- has no price at all and must not be invented.
+        """
+        channels = {
+            "MM":  {"USD": {"bid": {}, "offer": {"3M": 0.0385}, "mid": {}}},
+            "AFS": {"USD": {"bid": {"3M": 0.0410}, "offer": {"3M": 0.0420}}},
+        }
+        opps = scan_across_channels(channels, self.fx, ["USDCNH"], ["3M"],
+                                    threshold_bps=1.0, allow_mismatch=False)
+        same = [o for o in opps if o.kind == "cross_channel_same_ccy"]
+        self.assertEqual(len(same), 1, "exactly one direction should be tradeable")
+        o = same[0]
+        self.assertEqual((o.borrow_channel, o.lend_channel), ("MM", "AFS"))
+        self.assertAlmostEqual(o.pnl_bps, 25.0, places=2)   # 4.10 bid - 3.85 offer
+        # firm, because an offer is an executable price -- not indicative
+        self.assertFalse(o.indicative)
+        self.assertNotIn("INDICATIVE", o.detail)
+
     def test_reference_only_channel_is_flagged_indicative(self):
         mm = {"USD": {"bid": {}, "offer": {}, "mid": {"3M": 0.0380}}}
         widened, ind = sources.apply_reference_sides(mm, half_spread_bps=0.0)
@@ -347,16 +368,28 @@ class TestDocxReader(unittest.TestCase):
             ("Money Market Reference is for T+0 value.",),
         ])
         surf, meta = parse_docx(str(self.tmp), verbose=False)
-        # a single reference rate is one-sided: it lands on 'mid', and NEVER as
-        # bid == offer, which would imply a zero spread and fake arbitrage
-        self.assertAlmostEqual(surf["USD"]["mid"]["1M"], 0.0385)
-        self.assertAlmostEqual(surf["EUR"]["mid"]["3M"], 0.0250)
-        self.assertEqual(surf["USD"]["bid"], {})
-        self.assertEqual(surf["USD"]["offer"], {})
+        # The MM email quotes ONE number per currency and that number is the
+        # OFFER -- the rate we can borrow at. It is firm, so it goes on the
+        # offer side; the missing bid correctly means we cannot place there.
+        self.assertAlmostEqual(surf["USD"]["offer"]["1M"], 0.0385)
+        self.assertAlmostEqual(surf["EUR"]["offer"]["3M"], 0.0250)
+        self.assertEqual(surf["USD"]["bid"], {})     # never invented
+        self.assertEqual(surf["USD"]["mid"], {})
         # both currency columns survive even when they hold identical numbers
         self.assertIn("EUR", surf)
         self.assertEqual(meta["settle"], "T+0")
-        self.assertIn("USD", meta["reference_only"])
+        self.assertIn("USD", meta["one_sided"])
+        self.assertEqual(meta["single_side"], "offer")
+
+    def test_single_side_is_overridable_without_a_code_change(self):
+        _make_docx(self.tmp, [
+            ("Tenor", "USD"),
+            ("1M", "3.85"),
+        ])
+        surf, meta = parse_docx(str(self.tmp), verbose=False, single_side="mid")
+        self.assertAlmostEqual(surf["USD"]["mid"]["1M"], 0.0385)
+        self.assertEqual(surf["USD"]["offer"], {})
+        self.assertEqual(meta["single_side"], "mid")
 
     def test_identical_values_in_two_columns(self):
         _make_docx(self.tmp, [
@@ -389,9 +422,9 @@ class TestDocxReader(unittest.TestCase):
             ("5Y", "4.70"),
         ])
         surf, meta = parse_docx(str(self.tmp), verbose=False)
-        self.assertIn("1M", surf["USD"]["mid"])
-        self.assertNotIn("3Y", surf["USD"]["mid"])   # bond rows must not leak
-        self.assertNotIn("5Y", surf["USD"]["mid"])
+        self.assertIn("1M", surf["USD"]["offer"])
+        self.assertNotIn("3Y", surf["USD"]["offer"])   # bond rows must not leak
+        self.assertNotIn("5Y", surf["USD"]["offer"])
         self.assertTrue(meta["skipped"])
 
 

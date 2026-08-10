@@ -42,6 +42,10 @@ def main(argv=None):
     p.add_argument("--docx", action="append", default=[],
                    help="Internal rate email saved as .docx; repeatable. "
                         "Read directly (exact) -- do NOT print to PDF and OCR.")
+    p.add_argument("--docx-side", default="offer", choices=["offer", "bid", "mid"],
+                   help="Which side a .docx table quoting ONE number per currency "
+                        "is. The MM email quotes the offer (the rate we borrow "
+                        "at), so that is the default and it is treated as firm.")
     p.add_argument("--quote", action="append", default=[],
                    help="Ad-hoc quote, e.g. --quote \"USD,3M,4.00,4.10\"; "
                         "repeatable. For a broker's quote typed in on the spot.")
@@ -96,11 +100,15 @@ def main(argv=None):
         channels[Path(path).stem] = sources.surface_from_text(path, excl)
     for path in args.docx:
         from quote_ocr.docx_reader import parse_docx
-        surf_d, meta_d = parse_docx(path)
+        surf_d, meta_d = parse_docx(path, single_side=args.docx_side)
         channels[Path(path).stem] = surf_d
-        if meta_d.get("reference_only"):
-            print(f"    note: {', '.join(meta_d['reference_only'])} are single "
-                  f"reference rates (stored as 'mid', NOT bid==offer)")
+        if meta_d.get("one_sided"):
+            side = meta_d.get("single_side", "offer")
+            what = {"offer": "we can borrow there, not place",
+                    "bid": "we can place there, not borrow",
+                    "mid": "indicative only, not executable"}[side]
+            print(f"    note: {', '.join(meta_d['one_sided'])} quote the {side} "
+                  f"only -- {what}")
         if meta_d.get("settle"):
             print(f"    note: settlement {meta_d['settle']} -- confirm it matches "
                   f"the other channels before comparing")

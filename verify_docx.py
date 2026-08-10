@@ -23,6 +23,11 @@ def main(argv=None):
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("files", nargs="+", help=".docx rate emails to check.")
     p.add_argument("--raw", action="store_true", help="Also dump raw table cells.")
+    p.add_argument("--side", default="offer", choices=["offer", "bid", "mid"],
+                   help="Which side a table quoting ONE number per currency is. "
+                        "The MM money-market email quotes the offer (the rate we "
+                        "borrow at), so 'offer' is the default. Use 'mid' only "
+                        "for a source that really publishes a mid.")
     p.add_argument("--max-rate", type=float, default=25.0,
                    help="Flag rates above this %% as implausible (default 25).")
     args = p.parse_args(argv)
@@ -45,7 +50,7 @@ def main(argv=None):
                     for row in table:
                         line = " | ".join(row)
                         print("   " + (line[:150] + " ...") if len(line) > 150 else "   " + line)
-            surf, meta = parse_docx(path, verbose=False)
+            surf, meta = parse_docx(path, verbose=False, single_side=args.side)
         except Exception as e:
             print(f"  PARSE FAILED: {e}")
             bad += 1
@@ -57,19 +62,28 @@ def main(argv=None):
         if meta.get("sections"):
             for s in meta["sections"]:
                 print(f"  section: {s}")
+        side = meta.get("single_side", "offer")
+        if meta.get("one_sided"):
+            print(f"  one-sided ({side} only, no other side): "
+                  f"{', '.join(meta['one_sided'])}")
         print()
         print(f"  {'ccy':5} {'tenor':6} {'bid%':>10} {'offer%':>10} {'mid%':>10}  note")
-        print("  " + "-" * 64)
+        print("  " + "-" * 66)
         n = 0
+        one_sided = {c.upper() for c in meta.get("one_sided", [])}
         for ccy in sorted(surf):
             b = surf[ccy]["bid"]
             o = surf[ccy]["offer"]
             m = surf[ccy].get("mid", {})
             for t in sorted(set(b) | set(o) | set(m), key=lambda x: _order(x)):
                 bv, ov, mv = b.get(t), o.get(t), m.get(t)
-                # A one-sided rate must show up as one-sided here too, otherwise
-                # this check would confirm a two-way price that does not exist.
-                note = "reference only (one-sided)" if mv is not None else ""
+                # State which side is MISSING: that is what decides whether we
+                # can borrow here, place here, or only look.
+                note = ""
+                if ccy in one_sided:
+                    note = {"offer": "offer only - we can borrow, not place",
+                            "bid": "bid only - we can place, not borrow",
+                            "mid": "mid only - indicative, not executable"}[side]
                 print(f"  {ccy:5} {t:6} {_f(bv):>10} {_f(ov):>10} {_f(mv):>10}  {note}")
                 n += 1
         print(f"\n  {n} quote row(s) for {len(surf)} currency(ies)")
@@ -110,10 +124,14 @@ def _checks(surf, meta, max_rate) -> int:
                     problems.append(f"{ccy} {t} {name} = {v*100:.4f}% is implausible")
             if bv is not None and ov is not None and bv > ov + 1e-9:
                 problems.append(f"{ccy} {t}: bid {bv*100:.4f} > offer {ov*100:.4f}")
-            # a reference rate must NOT have been duplicated onto both sides
-            if mv is not None and (bv is not None or ov is not None):
-                problems.append(f"{ccy} {t}: one-sided reference rate also has a "
-                                f"bid/offer -- it must stay one-sided")
+            # a one-sided quote must stay one-sided: filling the other side in
+            # would invent a spread nobody quoted
+            if ccy.upper() in {c.upper() for c in meta.get("one_sided", [])}:
+                filled = [n for n, v in (("bid", bv), ("offer", ov), ("mid", mv))
+                          if v is not None]
+                if len(filled) > 1:
+                    problems.append(f"{ccy} {t}: one-sided quote ended up on "
+                                    f"{'+'.join(filled)} -- it must stay one-sided")
     if not meta.get("settle"):
         problems.append("settlement basis not found -- confirm T+0 vs T+2 by hand")
     for pr in problems:

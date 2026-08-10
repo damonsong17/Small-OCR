@@ -40,12 +40,17 @@ def parse_filename(stem: str):
     return m.group("source"), f"{d[:4]}-{d[4:6]}-{d[6:8]}"
 
 
-def _quotes_from_docx(path: str):
-    """Turn a .docx rate email into Quote rows for the store."""
+def _quotes_from_docx(path: str, single_side: str = "offer"):
+    """Turn a .docx rate email into Quote rows for the store.
+
+    ``single_side`` is which side a one-number-per-currency table is; the MM
+    money-market email quotes the offer, so that is the default.
+    """
     from .docx_reader import parse_docx
     from .models import Quote
-    surf, meta = parse_docx(path, verbose=False)
-    ref_only = {c.upper() for c in meta.get("reference_only", [])}
+    surf, meta = parse_docx(path, verbose=False, single_side=single_side)
+    one_sided = {c.upper() for c in meta.get("one_sided", [])}
+    side = meta.get("single_side", single_side)
     out = []
     def _pct(v):
         return "" if v is None else f"{v*100:.6f}".rstrip("0").rstrip(".")
@@ -71,7 +76,7 @@ def _quotes_from_docx(path: str):
                 benchmark=meta.get("settle", ""),
                 source_file=Path(path).name, page=1, confidence=1.0,
                 raw=f"docx {meta.get('settle','')}"
-                    + (" reference-only" if ccy in ref_only else "")))
+                    + (f" {side}-only" if ccy in one_sided else "")))
     return out
 
 

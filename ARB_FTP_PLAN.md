@@ -66,10 +66,15 @@ surface,**不合并**,然后对每一对有序渠道 (A→B) 扫两种形态:
 > 为什么必须分开存:`merge_surfaces` 取"最低 offer / 最高 bid",若 AFS offer 4.10、内部
 > offer 3.90,合并后只剩 3.90,**"内部借、AFS 拆"这笔交易就消失了**。合并恰好抹掉了我们要找的东西。
 
-**单边报价(reference rate)**:内部 MM 邮件每个币种只给**一个**数,不是双边价。它存进
-`mid` 一侧,**绝不写成 `bid == offer`**——那等于宣称零点差,会凭空造出套利。要参与扫描时由
-`sources.apply_reference_sides()` 按假定半点差展开成双边,并记下"哪一侧是我们编出来的",
-凡用到的路径一律标 `[INDICATIVE]`。发布的 FTP 面默认**剔除**这些边(`--ftp-use-reference` 可覆盖)。
+**单边报价**:内部 MM 邮件每个币种只给**一个**数,而这个数是 **offer ——我们能借入的价**。
+所以它存进 `offer` 一侧,是**实价**,用它做借入腿的套利是真机会,不加任何 indicative 标记。
+**缺 bid 本身就是信息**:我们可以从 MM 借,但**不能把钱拆给 MM**,引擎因此不会生成反向交易。
+
+**绝不写成 `bid == offer`** —— 那等于宣称零点差,会凭空造出套利。
+
+哪一边由 `--docx-side` 控制(`offer` 默认 / `bid` / `mid`),**改口径不用改代码**。只有确实
+公布 mid 的来源才用 `mid`:那种数落在自己一侧,由 `sources.apply_reference_sides()` 按假定
+半点差展开,凡用到的路径标 `[INDICATIVE]`,并默认不进发布的 FTP 面(`--ftp-use-reference` 可覆盖)。
 
 ### (b) 市场 CIP basis —— scaffold(phase 2)
 纯市场无效率(xccy basis):Bloomberg **市场利率(OIS/HIBOR)** vs **FX-swap 隐含利率** 的偏离。需要 OIS 等 ticker(§10 待确认)。结构上与 (a) 相同,只是两腿都用 Bloomberg 市场利率而非渠道价。风险类型标注为"basis / 需资产负债表容量"。
@@ -112,7 +117,8 @@ python run_desk.py --db data\output\quotes.db --date 2026-08-07 --tenors auto --
 FTP 面**。`scan.py` 是单面版本,`--source AFS` 可只看一家。离线开发去掉 `--live`(mock 市场数据)。
 
 标记含义:`MISMATCH` = 期限错配(gap/rollover 风险,腿的 tenor 都写在 `legs` 里);
-`INDIC` = 某条腿来自单边 reference rate,不是可成交的双边价,下单前需确认真实报价。
+`INDIC` = 某条腿来自 mid(公布的是中间价,不是可成交的边),下单前需确认真实报价。
+MM 那种 offer-only 的**不带这个标记** —— offer 就是实价。
 
 ## 9. 分阶段
 
@@ -136,6 +142,7 @@ FTP 面**。`scan.py` 是单面版本,`--source AFS` 可只看一家。离线开
 2. 远期腿 ticker 返回 points 还是 outright、pip 因子。
 3. **结算日不一致**:MM 是 T+0,MP / AFS 是 T+2。目前只**报告**不换算(`benchmark` 列存了
    T+0/T+2)。要跨这两者比价,需要你定 O/N 的换算口径;定了之后只改换算函数,引擎不动。
-4. 单边 reference rate 的假定半点差(`--ref-spread-bps`),默认 0(即直接用该参考价两侧)。
+4. ~~MM 单边价是哪一边~~ —— **已确认:是 offer(我们借入的价)**,`--docx-side` 默认即此。
+   `--ref-spread-bps` 只对确实公布 mid 的来源有意义。
 
 以上两点确认后,数值即为可交易口径;当前引擎与路径判断已就绪。
