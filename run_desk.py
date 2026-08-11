@@ -179,17 +179,27 @@ def main(argv=None):
         _print_opps(x, title="CROSS-CHANNEL ARBITRAGE (borrow one source, lend another)")
 
     # ---- 4. FTP surface, made arbitrage free --------------------------------
-    # The FTP surface is PUBLISHED, so it is built from firm two-way quotes
-    # only. A widened reference rate is fine for spotting an opportunity to
-    # investigate; it must not silently become a price we quote to the bank.
+    # The FTP surface is PUBLISHED, so an indicative price must not become one
+    # we quote. But discarding a side outright would leave a hole even when a
+    # perfectly good quote exists at another source: we take the best offer from
+    # whoever is cheapest and the best bid from whoever pays most, and those two
+    # need not be the same desk. So re-merge over FIRM sides only -- dropping an
+    # indicative price then falls back to the next best REAL one.
     ftp_input = surface
-    merged_ind = _merged_indicative(channels, indicative, surface)
-    if merged_ind and not args.ftp_use_reference:
-        ftp_input = _drop_keys(surface, merged_ind)
-        ccys = sorted({c for c, _, _ in merged_ind})
-        print(f"FTP input: dropped indicative sides for {', '.join(ccys)} "
-              f"(one-sided reference rates). Pass --ftp-use-reference to keep "
-              f"them, knowing the published price would rest on an assumed spread.")
+    if not args.ftp_use_reference and any(indicative.values()):
+        ftp_input = _firm_surface(channels, indicative)
+        lost = _sides_lost(surface, ftp_input)
+        ccys = sorted({c for c, _, _ in
+                       {k for s in indicative.values() for k in s}})
+        print(f"FTP input: indicative sides for {', '.join(ccys)} replaced by the "
+              f"best FIRM quote across sources.")
+        if lost:
+            # only where NO source quotes that side for real
+            print(f"  {len(lost)} side(s) had no firm quote anywhere and are left "
+                  f"blank: {', '.join(lost[:10])}"
+                  + (" ..." if len(lost) > 10 else ""))
+            print(f"  Pass --ftp-use-reference to fill those from the reference "
+                  f"rate instead, knowing the price rests on an assumed spread.")
     ftp_surface, adjustments = ftp_mod.build_ftp(
         ftp_input, fx, pairs, tenors, margin_bps=args.margin_bps, mode=args.mode)
     _print_ftp(ftp_surface, tenors, adjustments)
@@ -258,16 +268,38 @@ def _merged_indicative(channels, indicative, merged):
     return out
 
 
-def _drop_keys(surface, keys):
-    """Copy of the surface without the given (ccy, side, tenor) entries."""
-    out = {}
-    for ccy, sides in surface.items():
-        e = {}
+def _firm_surface(channels, indicative):
+    """Best-of merge across sources, counting only firm (non-indicative) sides.
+
+    Same rule as the ordinary merge -- lowest offer, highest bid -- but a side
+    that was invented from a one-sided reference rate is left out of the
+    comparison. The merge then naturally falls back to the second-best real
+    quote rather than leaving the cell empty.
+    """
+    firm = []
+    for name, surf in channels.items():
+        ind = indicative.get(name, set())
+        s = {}
+        for ccy, sides in surf.items():
+            e = {"bid": {}, "offer": {}}
+            for side in ("bid", "offer"):
+                for t, v in sides.get(side, {}).items():
+                    if (ccy.upper(), side, t) not in ind:
+                        e[side][t] = v
+            s[ccy] = e
+        firm.append(s)
+    return sources.merge_surfaces(*firm)
+
+
+def _sides_lost(before, after):
+    """(ccy, tenor, side) present before the firm-only merge and absent after."""
+    lost = []
+    for ccy, sides in before.items():
         for side in ("bid", "offer"):
-            e[side] = {t: v for t, v in sides.get(side, {}).items()
-                       if (ccy.upper(), side, t) not in keys}
-        out[ccy] = e
-    return out
+            for t in sides.get(side, {}):
+                if t not in after.get(ccy, {}).get(side, {}):
+                    lost.append(f"{ccy} {t} {side}")
+    return sorted(lost)
 
 
 def _fx_coverage(fx, pairs, tenors):

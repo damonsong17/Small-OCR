@@ -267,6 +267,49 @@ class TestCrossChannelArb(unittest.TestCase):
         self.assertIn("INDICATIVE", same[0].detail)
 
 
+class TestFtpInput(unittest.TestCase):
+    """An indicative price must be replaced, not leave a hole."""
+
+    def _channels(self):
+        # MM quotes only a reference rate; its widened bid (3.85) beats both
+        # real bids, so it wins the ordinary best-of merge
+        mm = {"USD": {"bid": {}, "offer": {}, "mid": {"3M": 0.0385}}}
+        widened, ind = sources.apply_reference_sides(mm)
+        return ({"MM": widened,
+                 "MP": {"USD": {"bid": {"3M": 0.0378}, "offer": {"3M": 0.0410}}},
+                 "AFS": {"USD": {"bid": {"3M": 0.0370}, "offer": {"3M": 0.0425}}}},
+                {"MM": ind})
+
+    def test_falls_back_to_the_best_firm_quote(self):
+        import run_desk
+        channels, ind = self._channels()
+        firm = run_desk._firm_surface(channels, ind)
+        # not blank, and not the indicative 3.85 -- the best REAL bid, MP's 3.78
+        self.assertAlmostEqual(firm["USD"]["bid"]["3M"], 0.0378)
+        # the offer side is unaffected: cheapest borrow across sources
+        self.assertAlmostEqual(firm["USD"]["offer"]["3M"], 0.0410)
+
+    def test_best_offer_and_best_bid_may_come_from_different_sources(self):
+        import run_desk
+        channels = {
+            "MM":  {"USD": {"bid": {}, "offer": {"3M": 0.0385}}},
+            "AFS": {"USD": {"bid": {"3M": 0.0410}, "offer": {"3M": 0.0425}}},
+        }
+        firm = run_desk._firm_surface(channels, {})
+        self.assertAlmostEqual(firm["USD"]["offer"]["3M"], 0.0385)   # MM cheapest
+        self.assertAlmostEqual(firm["USD"]["bid"]["3M"], 0.0410)     # AFS pays most
+
+    def test_a_side_no_source_quotes_is_reported_not_silently_blank(self):
+        import run_desk
+        channels, ind = self._channels()
+        channels["MP"]["USD"]["bid"] = {}
+        channels["AFS"]["USD"]["bid"] = {}      # now nobody has a real bid
+        merged = sources.merge_surfaces(*channels.values())
+        firm = run_desk._firm_surface(channels, ind)
+        self.assertEqual(firm["USD"]["bid"], {})
+        self.assertIn("USD 3M bid", run_desk._sides_lost(merged, firm))
+
+
 class TestReferenceSides(unittest.TestCase):
     def test_mid_never_becomes_a_free_two_way_price(self):
         surf = {"USD": {"bid": {}, "offer": {}, "mid": {"3M": 0.0400}}}
