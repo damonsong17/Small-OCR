@@ -113,6 +113,31 @@ def _quotes_from_text(path: str):
 TEXT_SUFFIXES = {".txt", ".csv", ".md"}
 
 
+def _under(path: Path, folder: Path) -> bool:
+    try:
+        return folder in path.resolve().parents
+    except OSError:                                   # pragma: no cover
+        return False
+
+
+def _is_our_own_csv(path: Path) -> bool:
+    """True for a CSV this pipeline wrote (matched on its header signature).
+
+    Re-ingesting our own output silently degrades it: the long format has no
+    benchmark or segment column, so a rich matrix extraction comes back as a
+    flat bid/offer list and REPLACES the good rows for that source and date.
+    """
+    if path.suffix.lower() != ".csv":
+        return False
+    try:
+        with open(path, encoding="utf-8-sig") as f:
+            head = f.readline()
+    except OSError:                                   # pragma: no cover
+        return False
+    cols = {c.strip().lower() for c in head.split(",")}
+    return {"source_file", "confidence", "raw"} <= cols
+
+
 def _xlsx_builder():
     """Return to_excel.build if Excel export is available, else (None, reason)."""
     try:
@@ -166,6 +191,18 @@ def ingest(
 
     known = SUPPORTED_SUFFIXES | TEXT_SUFFIXES | {".docx"}
     everything = [p for p in sorted(inbox_path.rglob("*")) if p.is_file()]
+
+    # The output folder is very often INSIDE the inbox ("ingest.py data --out
+    # data\output"). Since .csv became an input type, our own long-format CSV
+    # would be re-ingested as if it were a quote source -- and because it has no
+    # benchmark or segment column, it would REPLACE a good extraction with a
+    # flattened one. Never read anything we wrote.
+    out_abs = out_path.resolve()
+    from_output = [p for p in everything if _under(p, out_abs)]
+    everything = [p for p in everything if not _under(p, out_abs)]
+    ours = [p for p in everything if _is_our_own_csv(p)]
+    everything = [p for p in everything if p not in ours]
+
     files = [p for p in everything if p.suffix.lower() in known]
     # A file we do not handle is REPORTED, never silently passed over: dropping
     # a quote source without a word is how a whole channel goes missing.
@@ -173,6 +210,13 @@ def ingest(
                if p.suffix.lower() not in known and not p.name.startswith("~$")]
     if verbose:
         print(f"  found {len(files)} quote file(s) under {inbox}")
+        if from_output:
+            print(f"  (skipped {len(from_output)} file(s) inside the output "
+                  f"folder {out_path} -- never re-reading what we wrote)")
+        if ours:
+            print(f"  (skipped {len(ours)} file(s) that are this pipeline's own "
+                  f"output CSV: {', '.join(p.name for p in ours[:3])}"
+                  + (" ..." if len(ours) > 3 else "") + ")")
         if ignored:
             exts = sorted({p.suffix.lower() or "(no extension)" for p in ignored})
             print(f"  ! ignored {len(ignored)} file(s) with unhandled type "

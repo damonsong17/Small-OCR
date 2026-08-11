@@ -467,6 +467,51 @@ class TestTextSources(unittest.TestCase):
         self.assertEqual((q.currency, q.tenor, q.bid, q.offer), ("USD", "3M", "4.02", "4.09"))
         self.assertEqual(q.mid, "")
 
+    def test_output_is_never_re_ingested_as_input(self):
+        """`ingest.py data --out data\\output` must not eat its own CSV.
+
+        It used to: the output long-format CSV has no benchmark or segment
+        column, so re-reading it REPLACED a rich matrix extraction with a flat
+        bid/offer list for that source and date.
+        """
+        import io
+        import shutil
+        from contextlib import redirect_stdout
+        from quote_ocr.batch import ingest
+        d = Path("_test_inbox2/SRC")
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "SRC_20260810.csv").write_text(
+            "currency,tenor,bid,offer\nUSD,3M,4.02,4.09\n", encoding="utf-8")
+        out = Path("_test_inbox2/output")          # deliberately INSIDE the inbox
+        try:
+            with redirect_stdout(io.StringIO()):
+                ingest("_test_inbox2", str(out), make_xlsx=False)
+            produced = out / "csv" / "SRC" / "SRC_2026-08-10.csv"
+            self.assertTrue(produced.exists())
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                r2 = ingest("_test_inbox2", str(out), make_xlsx=False)
+            self.assertEqual(r2["processed"], 0, "second pass must find nothing new")
+            self.assertIn("inside the output folder", buf.getvalue())
+        finally:
+            shutil.rmtree("_test_inbox2", ignore_errors=True)
+
+    def test_our_own_csv_is_recognised_wherever_it_sits(self):
+        from quote_ocr.batch import _is_our_own_csv
+        ours = Path("_test_ours.csv")
+        theirs = Path("_test_theirs.csv")
+        try:
+            ours.write_text("date,supplier,currency,tenor,bid,offer,source_file,"
+                            "page,confidence,raw,segment,benchmark,benchmark_rate,mid\n",
+                            encoding="utf-8")
+            theirs.write_text("currency,tenor,bid,offer\n", encoding="utf-8")
+            self.assertTrue(_is_our_own_csv(ours))
+            self.assertFalse(_is_our_own_csv(theirs))   # a real broker CSV
+        finally:
+            for f in (ours, theirs):
+                if f.exists():
+                    os.remove(f)
+
     def test_unhandled_file_types_are_reported_not_skipped(self):
         import io
         from contextlib import redirect_stdout
