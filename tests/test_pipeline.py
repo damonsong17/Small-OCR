@@ -470,6 +470,32 @@ class TestDocxReader(unittest.TestCase):
         self.assertNotIn("5Y", surf["USD"]["offer"])
         self.assertTrue(meta["skipped"])
 
+    def test_bond_rows_are_kept_for_the_record_not_thrown_away(self):
+        """Out of the funding surface, but still in the CSV and the database.
+
+        Seeing every row the email contained is how a mis-parse is spotted; the
+        segment is what keeps a bond yield from ever pricing an FX swap.
+        """
+        _make_docx(self.tmp, [
+            ("Tenor", "USD"),
+            ("1M", "3.85"),
+            ("USD SENIOR BOND",),
+            ("Tenor", "REFERENCE RATES(%)"),
+            ("3Y", "4.62"),
+        ])
+        _, meta = parse_docx(str(self.tmp), verbose=False)
+        self.assertEqual(len(meta["other"]), 1)
+        self.assertEqual(meta["other"][0]["tenor"], "3Y")
+
+        from quote_ocr.batch import _quotes_from_docx
+        rows = _quotes_from_docx(str(self.tmp))
+        bond = [q for q in rows if q.tenor == "3Y"]
+        self.assertEqual(len(bond), 1, "the bond row must reach the store")
+        self.assertIn("SENIOR BOND", bond[0].segment)
+        self.assertFalse(sources.is_tradeable(bond[0].segment))
+        self.assertIn("not a money-market funding quote",
+                      sources.reason(bond[0].segment))
+
 
 class TestTextSources(unittest.TestCase):
     """Broker lists, chat scrapes and PDF-to-Markdown reach the store too."""

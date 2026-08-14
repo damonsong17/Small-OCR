@@ -77,6 +77,18 @@ def _quotes_from_docx(path: str, single_side: str = "offer"):
                 source_file=Path(path).name, page=1, confidence=1.0,
                 raw=f"docx {meta.get('settle','')}"
                     + (f" {side}-only" if ccy in one_sided else "")))
+
+    # Non-money-market blocks (USD SENIOR BOND, CDs) are not funding quotes and
+    # must not price a swap, but they ARE in the email. They go to the store
+    # under their section name so the CSV shows the whole document; the segment
+    # keeps them out of every funding surface.
+    for o in meta.get("other", []):
+        out.append(Quote(
+            currency=o["currency"], tenor=o["tenor"],
+            mid=_pct(o["rate"]), segment=o["section"],
+            benchmark=meta.get("settle", ""),
+            source_file=Path(path).name, page=1, confidence=1.0,
+            raw=f"docx {o['section']} (not a funding quote)"))
     return out
 
 
@@ -198,6 +210,13 @@ def ingest(
     # benchmark or segment column, it would REPLACE a good extraction with a
     # flattened one. Never read anything we wrote.
     out_abs = out_path.resolve()
+    if out_abs == inbox_path.resolve() or out_abs in inbox_path.resolve().parents:
+        # would exclude the entire inbox, so say so instead of reporting
+        # "0 quote files" and letting it look like the scan broke
+        print(f"  ! --out {out_path} is the inbox itself (or contains it), so "
+              f"every file would be treated as our own output and skipped.")
+        print(f"    Use a separate folder, e.g. --out {inbox_path}\\output")
+        return {"processed": 0, "skipped": 0, "unnamed": 0, "quotes": 0}
     from_output = [p for p in everything if _under(p, out_abs)]
     everything = [p for p in everything if not _under(p, out_abs)]
     ours = [p for p in everything if _is_our_own_csv(p)]

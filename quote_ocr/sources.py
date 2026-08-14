@@ -109,13 +109,22 @@ def _matches(name: str, group) -> bool:
     return False
 
 
+# Blocks that are quoted on the same sheet/email but are NOT money-market
+# funding: a senior bond yield or a CD level cannot price an FX swap. They are
+# kept in the store and the CSV (that is how you check the parse) and excluded
+# from every funding surface.
+NON_FUNDING_SEGMENTS = {"senior bond", "bond", "cd", "certificate of deposit"}
+
+
 def access_status(segment: Optional[str]) -> str:
-    """'tradeable' | 'no_kyc' | 'unknown' for a segment."""
+    """'tradeable' | 'no_kyc' | 'non_funding' | 'unknown' for a segment."""
     n = _norm(segment)
     if not n:
         return "tradeable"          # source has no segment concept
     if _matches(segment, NO_KYC_SEGMENTS):
         return "no_kyc"
+    if _matches(segment, NON_FUNDING_SEGMENTS):
+        return "non_funding"
     if _matches(segment, TRADEABLE_SEGMENTS):
         return "tradeable"
     return "unknown"
@@ -128,7 +137,7 @@ def is_tradeable(segment: Optional[str], whitelist: bool = True) -> bool:
     access config, with UNKNOWN_SEGMENT_POLICY deciding new/unseen segments.
     """
     st = access_status(segment)
-    if st == "no_kyc":
+    if st in ("no_kyc", "non_funding"):
         return False
     if st == "unknown":
         return UNKNOWN_SEGMENT_POLICY == "include" or not whitelist
@@ -138,6 +147,8 @@ def is_tradeable(segment: Optional[str], whitelist: bool = True) -> bool:
 def reason(segment: Optional[str]) -> str:
     return {
         "no_kyc": "no KYC relationship - we cannot obtain these prices",
+        "non_funding": "not a money-market funding quote (kept in the store, "
+                       "never used to price a swap)",
         "unknown": "counterparty not in the access config",
         "tradeable": "",
     }[access_status(segment)]

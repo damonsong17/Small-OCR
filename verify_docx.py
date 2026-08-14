@@ -132,6 +132,15 @@ def _checks(surf, meta, max_rate) -> int:
                 if len(filled) > 1:
                     problems.append(f"{ccy} {t}: one-sided quote ended up on "
                                     f"{'+'.join(filled)} -- it must stay one-sided")
+    if meta.get("orphan_rows"):
+        problems.append(f"{len(meta['orphan_rows'])} row(s) had a tenor but no "
+                        f"recognised header, so they were NOT read: "
+                        + "; ".join(meta["orphan_rows"][:3]))
+    if meta.get("other"):
+        # not an error -- state it so the row count adds up against the document
+        print(f"  note: {len(meta['other'])} non-funding row(s) kept for the "
+              f"record (segment "
+              f"{', '.join(sorted({o['section'] for o in meta['other']}))})")
     if not meta.get("settle"):
         problems.append("settlement basis not found -- confirm T+0 vs T+2 by hand")
     for pr in problems:

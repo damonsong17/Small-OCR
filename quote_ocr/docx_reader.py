@@ -64,6 +64,17 @@ def read_tables(path: str) -> List[List[List[str]]]:
     return tables
 
 
+# What the first column of a header row is called. Try the spellings actually
+# seen before giving up -- a renamed column should not silently drop every row
+# under it, and orphan_rows reports whatever this still misses.
+_HEADER_LABELS = ("tenor", "period", "term", "maturity", "期限", "天期")
+
+
+def _is_header_label(s: str) -> bool:
+    low = (s or "").strip().lower()
+    return any(low.startswith(h) for h in _HEADER_LABELS)
+
+
 def _norm_tenor(s: str) -> Optional[str]:
     from .parser import canonical_tenor
     m = _TENOR_RE.match(s or "")
@@ -94,7 +105,7 @@ def parse_docx(path: str, default_currency: str = "",
 
     surface: Dict = {}
     meta: Dict = {"settle": "", "sections": [], "one_sided": [], "skipped": [],
-                  "single_side": single_side}
+                  "single_side": single_side, "other": [], "orphan_rows": []}
     # kept so existing callers/tests that read 'reference_only' still work
     meta["reference_only"] = meta["one_sided"]
 
@@ -127,7 +138,7 @@ def parse_docx(path: str, default_currency: str = "",
             first = cells[0] if cells else ""
 
             # header row: "Tenor | USD | EUR"  or  "Tenor | BID | OFFER"
-            if first.lower().startswith("tenor"):
+            if _is_header_label(first):
                 rest = [c.upper() for c in cells[1:] if c]
                 columns = rest
                 # NOTE: do not clear skip_block here -- a skipped section (e.g.
@@ -153,12 +164,30 @@ def parse_docx(path: str, default_currency: str = "",
                 continue
 
             tenor = _norm_tenor(first)
-            if tenor is None or not columns or skip_block:
+            if tenor is None:
+                continue
+            if not columns:
+                # A tenor row with no header above it: the "Tenor | USD | ..."
+                # line was not recognised, so every row under it would vanish.
+                # That is what a changed layout looks like -- count it and say so.
+                meta["orphan_rows"].append(f"{tenor}: {joined[:60]}")
                 continue
 
             vals = []
             for c in cells[1:]:
                 vals.append(float(c) if _NUM_RE.match(c) else None)
+
+            if skip_block:
+                # Not a funding quote, so it stays OUT of the surface -- but it
+                # is still real data from the email, and seeing it in the CSV is
+                # how you check the parse. Keep it, labelled by its section.
+                for v in vals:
+                    if v is not None:
+                        meta["other"].append({"section": section,
+                                              "currency": col_ccy, "tenor": tenor,
+                                              "rate": v / 100.0})
+                        break
+                continue
 
             if all(_CCY_RE.match(c) for c in columns):
                 # layout A: ONE number per currency column -- single_side says
@@ -194,6 +223,11 @@ def parse_docx(path: str, default_currency: str = "",
               + (f" | one-sided ({single_side} only): {', '.join(meta['one_sided'])}"
                  if meta["one_sided"] else "")
               + (f" | skipped: {', '.join(meta['skipped'])}" if meta["skipped"] else ""))
+        if meta["orphan_rows"]:
+            print(f"  ! {len(meta['orphan_rows'])} row(s) had a tenor but no "
+                  f"recognised header above them, so they were NOT read: "
+                  + "; ".join(meta["orphan_rows"][:4])
+                  + (" ..." if len(meta["orphan_rows"]) > 4 else ""))
     return surface, meta
 
 
