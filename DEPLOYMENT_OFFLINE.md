@@ -45,6 +45,31 @@ python scripts\make_bundle.py            # creates .\bundle\  (wheels + models +
 - `bundle\models\` — the RapidOCR `.onnx` weights (so no first-run download),
 - `bundle\requirements.lock.txt` — exact pinned versions.
 
+It ends with a **preflight** that fails on this machine — where there is still
+an internet connection — if anything the offline box needs is missing: a source
+distribution that would have to compile, absent OCR weights, or a missing
+package from the expected set (pandas, matplotlib, numpy, openpyxl, onnxruntime,
+rapidocr, tzdata). Discovering any of those after the USB trip costs a day.
+
+### What analysis packages are in the bundle, and why
+
+`pandas` and `matplotlib` are bundled although nothing in the OCR or pricing
+pipeline imports them: they are for putting trading records in the store and
+computing and plotting from them. Adding a package later means another trip to
+the networked machine, so they travel now.
+
+**`tzdata` is the one that is easy to lose.** Windows ships no system timezone
+database, so pandas needs it for anything tz-aware — value dates, the Zurich
+calendar. pandas declares it only under `sys_platform == "win32"`, and
+`pip download --platform win_amd64` does **not** evaluate that marker, so a
+bundle built on Linux drops it silently. It is named in `requirements.txt` and
+checked in preflight for exactly that reason.
+
+Verified for Windows + Python 3.14: pandas, matplotlib, numpy and every
+transitive dependency resolve to **binary wheels** (14 wheels, ~41 MB), so the
+offline box never needs a compiler. `opencv-python` ships `cp37-abi3` wheels,
+which install on 3.14 despite carrying no `cp314` tag.
+
 ### Bloomberg blpapi
 `make_bundle.py` also tries to download `blpapi` from Bloomberg's index. If that
 machine can't reach Bloomberg, get the wheel where you can:

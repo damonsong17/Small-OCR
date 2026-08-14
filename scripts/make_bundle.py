@@ -115,7 +115,8 @@ def _preflight():
     """Fail loudly here (with internet) rather than on the offline box."""
     print("\n--- preflight ---")
     ok = True
-    sdists = [f.name for f in WHEELS.glob("*") if f.suffix not in (".whl",)]
+    sdists = [f.name for f in WHEELS.glob("*")
+              if f.is_file() and f.suffix != ".whl"]
     if sdists:
         ok = False
         print(f"  FAIL: non-wheel files in wheelhouse (offline box would compile): {sdists}")
@@ -133,6 +134,24 @@ def _preflight():
         print("  OK: blpapi wheel present.")
     else:
         print("  note: no blpapi wheel (only needed for the Bloomberg step).")
+
+    # Every package the offline box is expected to have. Missing one is a wasted
+    # USB trip, so it fails here where there is still an internet connection.
+    # tzdata is the easy one to lose: pandas declares it only for win32, so a
+    # bundle built anywhere else drops it and tz-aware dates break offline.
+    want = {"pandas": "analysis", "matplotlib": "plots", "numpy": "arrays",
+            "openpyxl": "xlsx", "onnxruntime": "OCR", "rapidocr": "OCR",
+            "tzdata": "timezones on Windows"}
+    have = {f.name.split("-")[0].replace("_", "-").lower()
+            for f in WHEELS.glob("*.whl")}
+    missing = {p: why for p, why in want.items() if p not in have}
+    if missing:
+        ok = False
+        for p, why in sorted(missing.items()):
+            print(f"  FAIL: no {p} wheel in the bundle ({why}). "
+                  f"Run: pip install {p}   then rebuild.")
+    else:
+        print(f"  OK: all {len(want)} expected packages are in the wheelhouse.")
 
     print(f"  Python for this bundle: {sys.version.split()[0]} / {sys.platform} "
           f"-- the target MUST match.")

@@ -12,3 +12,17 @@ pymupdf>=1.23
 
 # Optional: reshape output CSV back into the wide AFS Excel layout (to_excel.py)
 openpyxl>=3.1
+
+# --- analysis / reporting -----------------------------------------------------
+# For trading records in the store: load a table, compute, and plot. Nothing in
+# the OCR or pricing pipeline imports these -- they are here so the offline
+# bundle carries them, because adding a package later means another USB trip.
+pandas>=2.2
+matplotlib>=3.8
+
+# Windows has no system timezone database, so pandas needs this for anything
+# tz-aware (value dates, the Zurich calendar). pandas declares it only under
+# sys_platform == "win32", and `pip download --platform win_amd64` does NOT
+# evaluate that marker -- so a bundle built on Linux silently omits it. Named
+# here so it is included however the bundle is built.
+tzdata; sys_platform == "win32"
